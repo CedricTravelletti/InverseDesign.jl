@@ -1,0 +1,6 @@
+[deps]
+DFTK = "acf6eb54-70d9-11e9-0013-234b7a5f5337"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+GeometryOptimization = "673bf261-a53d-43b9-876f-d3c1fc8329c2"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+UnitfulAtomic = "a7773ee8-282e-5fa2-be4e-bd808c38a91a"
