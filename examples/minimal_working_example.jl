@@ -27,6 +27,8 @@ calculator = DFTKCalculator(; model_kwargs, basis_kwargs, scf_kwargs, verbose=tr
 
 # Need to parse in order to use the model_DFT constructor.
 parsed = DFTK.parse_system(system)
+model = model_DFT(parsed.lattice, parsed.atoms, positions;
+		  symmetries=false, model_kwargs...)
 
 """
 Compute system total energy as a function of atomic positions.
@@ -35,10 +37,9 @@ Arguments:
 - `positions_flat` (flat) vector of atomic positions (6-dimensional).
 
 """
-function energy_wrt_pos(positions_flat)
+function energy_wrt_pos(positions_flat, model)
 	positions = collect.(eachcol(reshape(positions_flat, 3, :)))
-	model = model_DFT(parsed.lattice, parsed.atoms, positions;
-			  symmetries=false, model_kwargs...)
+	model = Model(model; positions)
 	basis = PlaneWaveBasis(model; basis_kwargs...)
 	scfres = self_consistent_field(basis; scf_kwargs...)
 	scfres.energies.total
@@ -46,7 +47,9 @@ end
 
 # Compute energy at equilibrium position.
 x0 = vcat(parsed.positions...)
-energy_wrt_pos(x0)
+energy_wrt_pos(x0, model)
 
 # Try derivarive.
-dfx0 = ForwardDiff.gradient(energy_wrt_pos, x0)
+dfx0 = ForwardDiff.gradient(x -> energy_wrt_pos(x, model), x0)
+dfx0_finite = FiniteDiff.finite_difference_gradient(x -> energy_wrt_pos(x, model), Vector(x0))
+norm(dfx0 - dfx0_finite)
