@@ -6,6 +6,7 @@ using UnitfulAtomic
 using DFTK
 using GeometryOptimization
 using ForwardDiff
+using FiniteDiff
 
 
 # Basic silicon system.
@@ -53,3 +54,16 @@ energy_wrt_pos(x0, model)
 dfx0 = ForwardDiff.gradient(x -> energy_wrt_pos(x, model), x0)
 dfx0_finite = FiniteDiff.finite_difference_gradient(x -> energy_wrt_pos(x, model), Vector(x0))
 norm(dfx0 - dfx0_finite)
+
+function bandgap_wrt_pos(positions_flat, model)
+	positions = collect.(eachcol(reshape(positions_flat, 3, :)))
+	model = Model(model; positions)
+	basis = PlaneWaveBasis(model; basis_kwargs...)
+	scfres = self_consistent_field(basis; scf_kwargs...)
+	compute_band_gaps(scfres)[:direct_bandgap]
+	scfres.energies.total
+end
+
+dbx0 = ForwardDiff.gradient(x -> bandgap_wrt_pos(x, model), x0)
+dbx0_finite = FiniteDiff.finite_difference_gradient(x -> bandgap_wrt_pos(x, model), Vector(x0))
+norm(dbx0 - dbx0_finite)
