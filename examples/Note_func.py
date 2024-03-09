@@ -4,6 +4,17 @@ import pickle
 with open('atoms.pkl', 'rb') as f:
     atoms = pickle.load(f)
 
+input = {}
+with open('Input.txt', 'r') as file:
+    for line in file:
+        key, value = line.strip().split(' : ')
+        try:
+            #Convert to integer if possible
+            input[key] = int(value)
+        except ValueError:
+            # If not possible, store as string
+            input[key] = value
+
 # ## Set up evaluation function (pipe to ASE) for trial parameters suggested by Ax. 
 # Note that this function can return additional keys that can be used in the `outcome_constraints` of the experiment.
 def evaluate(parameters):
@@ -30,11 +41,15 @@ from botorch.acquisition.analytic import ExpectedImprovement
 # from botorch import fit_gpytorch_model
 # fit_gpytorch_model(mll)
 
+import sys
+def str_to_class(classname):
+    return getattr(sys.modules[__name__], classname)
+
 model = BoTorchModel(
     # Optional `Surrogate` specification to use instead of default
     surrogate=Surrogate(
         # BoTorch `Model` type
-        botorch_model_class=FixedNoiseGP,
+        botorch_model_class=str_to_class(input['bo_surrogate']),
         # Optional, MLL class with which to optimize model parameters
         mll_class=ExactMarginalLogLikelihood,
         # Optional, dictionary of keyword arguments to underlying
@@ -42,7 +57,7 @@ model = BoTorchModel(
         model_options={},
     ),
     # Optional BoTorch `AcquisitionFunction` to use instead of default
-    botorch_acqf_class=ExpectedImprovement,
+    botorch_acqf_class=str_to_class(input['bo_acquisition_f']),
     # Optional dict of keyword arguments, passed to the input
     # constructor for the given BoTorch `AcquisitionFunction`
     acquisition_options={},
@@ -61,7 +76,7 @@ gs = GenerationStrategy(
         # initial sampling of the search space)
         GenerationStep(
             model=Models.SOBOL,
-            num_trials=5,  # How many trials should be produced from this generation step
+            num_trials=input['gs_init_steps'],  # How many trials should be produced from this generation step
             min_trials_observed=3,  # How many trials need to be completed to move to next model
             max_parallelism=5,  # Max parallelism for this step
             model_kwargs={"seed": 999},  # Any kwargs you want passed into the model
