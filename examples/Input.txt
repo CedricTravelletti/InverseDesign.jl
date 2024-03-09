@@ -10,3 +10,4 @@ adsorbant_init_h : 1.5
 bo_surrogate : FixedNoiseGP
 bo_acquisition_f : ExpectedImprovement
 gs_init_steps : 5
+n_bo_steps : 40
