@@ -5,6 +5,7 @@
     using DFTK
     using ForwardDiff
     using FiniteDiff
+    using LinearAlgebra
     
     system = construct_silicon()
     
