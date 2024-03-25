@@ -1,8 +1,9 @@
 # Any atom
 surface_atom : Cu
 lattice : fcc
-# Bridge, fcc, ontop
-ads_init_pos : bridge
+# Bridge, fcc, ontop, random
+ads_init_pos : random
+number_of_ads : 1
 number_of_layers : 3
 supercell_x_rep : 4
 supercell_y_rep : 4
@@ -18,3 +19,4 @@ n_bo_steps : 40
 #F or T
 opt_stop : F
 save_fig : T
+dyn_z_const : F
