@@ -7,9 +7,12 @@ with open('atoms.pkl', 'rb') as f:
 input = {}
 with open('Input.txt', 'r') as file:
     for line in file:
+        # Ignore lines starting with '#'
+        if line.startswith('#'):
+            continue
         key, value = line.strip().split(' : ')
         try:
-            #Convert to integer if possible
+            # Convert to integer if possible
             input[key] = int(value)
         except ValueError:
             # If not possible, store as string
@@ -33,7 +36,9 @@ from ax.models.torch.botorch_modular.model import BoTorchModel
 from ax.models.torch.botorch_modular.surrogate import Surrogate
 from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 from botorch.acquisition.analytic import ExpectedImprovement
-
+from botorch.acquisition import knowledge_gradient
+from botorch.acquisition import predictive_entropy_search
+from botorch.acquisition import max_value_entropy_search
 # model = SingleTaskGP(init_x, init_y)
 # mll = ExactMarginalLogLikelihood(single_model.likelihood, single_model)
 
@@ -79,8 +84,8 @@ gs = GenerationStrategy(
             num_trials=input['gs_init_steps'],  # How many trials should be produced from this generation step
             min_trials_observed=3,  # How many trials need to be completed to move to next model
             max_parallelism=5,  # Max parallelism for this step
-            model_kwargs={"seed": 999},  # Any kwargs you want passed into the model
-            model_gen_kwargs={},  # Any kwargs you want passed to `modelbridge.gen`
+            #model_kwargs={"seed": 999},  # Any kwargs you want passed into the model
+            #model_gen_kwargs={},  # Any kwargs you want passed to `modelbridge.gen`
         ),
         # 2. Bayesian optimization step (requires data obtained from previous phase and learns
         # from all data available at the time of each new candidate generation call)
