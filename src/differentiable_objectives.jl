@@ -44,8 +44,8 @@ Computes dual of the SCF by updating system positions in a differentiable way.
 
 Arguments:
 - `positions` ComponenVector with components `atoms` containing the (flattened) 
-                   vector of atomic positions in fractional coordinates and component 
-		   `strain` containing the strain to apply (in voigt notation).
+              vector of atomic positions in fractional coordinates and component 
+	      `strain` containing the strain to apply (in voigt notation).
 
 """
 function compute_scf_dual(calculator::DFTKCalculator,
@@ -77,25 +77,34 @@ end
 
 """
 Returns the index of the highest occupied band. 
-`atol` specifies the (fractional) occupations below which 
-a band is considered unoccupied.
+
 """
-function valence_band_index(occupations; atol=1e-36)
-    filter = x -> isapprox(x, 0.; atol)
-    maximum(maximum.(findall.(!filter, occupations)))
+function valence_band_index(scfres)
+    sum(scfres.occupation[1] .> scfres.occupation_threshold)
 end
 
 """
-Compute system direct  bandgap as a function of atomic positions.
+Compute system direct bandgap as a function of atomic positions.
 
 Arguments:
 - `positions_flat` (flattened) vector of atomic positions in fractional coordinates.
 
 """
-function direct_bandgap_wrt_pos(calculator::DFTKCalculator, system::AbstractSystem, positions_flat)
+function direct_bandgap(calculator::DFTKCalculator, system::AbstractSystem, positions_flat)
     scfres_dual = compute_scf_dual(calculator, system, positions_flat)
-    occupations = compute_occupation(scfres_dual.basis, scfres_dual.eigenvalues,
-				     scfres_dual.εF)[:occupation]
-    vi = valence_band_index(occupations; atol=1e-36)
+    vi = valence_band_index(scfres_dual)
     minimum([εk[vi + 1] - εk[vi] for εk in scfres_dual.eigenvalues])
+end
+
+"""
+Compute system bandgap at the Gamma point as a function of atomic positions.
+
+Arguments:
+- `positions_flat` (flattened) vector of atomic positions in fractional coordinates.
+
+"""
+function gamma_point_bandgap(calculator::DFTKCalculator, system::AbstractSystem, positions_flat)
+    scfres_dual = compute_scf_dual(calculator, system, positions_flat)
+    vi = valence_band_index(scfres_dual)
+    scfres_dual.eigenvalues[1][vi + 1] - scfres_dual.eigenvalues[1][vi]
 end
