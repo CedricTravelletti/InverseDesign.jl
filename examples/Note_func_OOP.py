@@ -111,13 +111,20 @@ from ase.calculators.eam import EAM
 
 class BOExperiment:
     number_of_exp = 0
-    def __init__(self):
+    ExperimentNames = []
+    BFGS_en = []
+    BFGS_runtime = []
+    BO_en = []
+    BO_runtime = []
+    
+    def __init__(self, expname):
+        self.expname = expname
         self.input = self.input_()
         self.atoms = bulk(self.input['surface_atom'], self.input['lattice'])
         self.gs = self.generation_stragegy()
-        self.file_name_format = f"ase_ads_DF_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_*.csv"
+        self.file_name_format = f"ase_ads_DF_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_" + "".join([char for char in self.input['bo_surrogate'] if char.isupper()]) + "_" + "".join([char for char in self.input['bo_acquisition_f'] if char.isupper()]) + f"_{self.expname}_*.csv"
         self.curr_date_time = time.strftime("%Y-%m-%d_%H-%M-%S")
-        self.folder_name = f"ASE_ads_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_{self.curr_date_time}"
+        self.folder_name = f"ASE_ads_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_" + "".join([char for char in self.input['bo_surrogate'] if char.isupper()]) + "_" + "".join([char for char in self.input['bo_acquisition_f'] if char.isupper()]) + f"_{self.curr_date_time}_{self.expname}"
         self.best_parameters = None
         self.best_objective = None
         self.best_parameters_list = []
@@ -127,7 +134,8 @@ class BOExperiment:
         self.best_parameters_list = []
         self.best_objective_list = []
         BOExperiment.add_exp()
-    
+        BOExperiment.ExperimentNames.append(self.expname)
+
     #Easy quick view of the atoms
     def view(self):
         return view(self.atoms, viewer='x3d')
@@ -229,17 +237,17 @@ class BOExperiment:
         ax[0].grid(True, linestyle='--', color='0.7', zorder=-1, linewidth=1, alpha=0.5)
         # Add horizontal line at x = gs_init_steps to indicate the end of the initialization trials.
         ax[0].axvline(x=self.input['gs_init_steps'], color='k', linestyle='--', linewidth=2, alpha=0.5, label='End of initialization trials')
-
+        
         #bfgs
         x_bfgs = range(len(self.df_bfgs))
         y_bfgs = self.df_bfgs['Energy']
         ax[0].plot(x_bfgs, y_bfgs, label=f"{self.input['calc_method']}_BFGS", color='r', marker='o', linestyle='-')
-
+        
         #BO
         trace = self.df['bo_trace']
         x = range(len(trace))
         ax[0].plot(x, trace, label=f"{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}", color='b', marker='o', linestyle='-')
-
+        
         # Plot the optimization trace vs time
         ax[1].set_title('BO Optimized Adsorption vs time')
         ax[1].set_xlabel("Optimization time (s)")
@@ -253,7 +261,7 @@ class BOExperiment:
         xt_BO = self.df['run_time']
         ax[1].axvline(x=self.df['run_time'][self.input['gs_init_steps']-1], color='k', linestyle='--', linewidth=2, alpha=0.5, label='End of initialization trials')
         ax[1].plot(xt_BO, trace, label=f"{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}", color='b', marker='o', linestyle='-')
-
+        
         plt.legend()
         ax[0].legend()
         if self.input["save_fig"] == "T":
@@ -328,7 +336,7 @@ class BOExperiment:
 
     def review_input(self):
         return print(self.input)
-    
+
     def input_(self):
         self.input = {}
         #Read input file
@@ -354,12 +362,12 @@ class BOExperiment:
         self.atoms.v, self.atoms.e, self.atoms.B = self.atoms.EOS.fit()
         self.atoms.cell *= (self.atoms.v / self.atoms.get_volume())**(1/3)
         return self.atoms.get_potential_energy()
-    
+
     def Add_adsorbant(self):
         self.a = self.atoms.cell[0, 1] * 2
         self.n_layers = self.input['number_of_layers']
         self.atoms = fcc111(self.input['surface_atom'], (self.input['supercell_x_rep'], self.input['supercell_y_rep'], self.n_layers), a=self.a)
-
+        
         self.ads_height = float(self.input['adsorbant_init_h'])
         self.n_ads = self.input['number_of_ads']
         self.ads = self.input['adsorbant_atom']
@@ -370,11 +378,11 @@ class BOExperiment:
                 self.poss = self.input['ads_init_pos']
             add_adsorbate(self.atoms, self.ads, height=self.ads_height, position=self.poss)
         self.atoms.center(vacuum = self.input['supercell_vacuum'], axis = 2) 
-
+        
         # Constrain all atoms except the adsorbate:
         self.fixed = list(range(len(self.atoms) - self.n_ads))
         self.atoms.constraints = [FixAtoms(indices=self.fixed)]
-    
+
     #Optimize using BFGS, data wrangling
     def BFGS_opt(self):
         self.build_save_path()
@@ -395,10 +403,12 @@ class BOExperiment:
         self.df_bfgs['Time'] = pd.to_timedelta(self.df_bfgs['Time'])
         self.df_bfgs['Time'] = self.df_bfgs['Time'].dt.total_seconds()
         self.df_bfgs['Time'] = self.df_bfgs['Time'] - self.df_bfgs['Time'][0]
+        BOExperiment.BFGS_runtime.append(self.df_bfgs['Time'][-1])
         
         self.BFGS_params = self.atoms[-1].position.copy()
         self.BFGS_params2 = self.atoms[-2].position.copy()
         self.bfgs_en = self.atoms.get_potential_energy()
+        BOExperiment.BFGS_en.append(self.bfgs_en)
 
     def BFGS_gif(self):
         self.BFGS_traj = Trajectory(f'{self.folder_name}/BFGS.traj')
@@ -415,10 +425,10 @@ class BOExperiment:
             # Translate atoms_rot to avoid overlap on final plot
             atoms_rot.translate([0, 0, 0])  # Adjust the translation vector as needed
             self.bfgs_combined_atoms_list.append(atoms_bfgs + atoms_rot)
-
+        
         if self.input["save_fig"] == "T":
             ase.io.write(f'{self.folder_name}/BFGS_traj.gif', self.bfgs_combined_atoms_list, interval=100) #Could save as video as well
-    
+
     def build_save_path(self):
         #Create the folder for the experiment
         if not os.path.exists(self.folder_name):
@@ -455,7 +465,7 @@ class BOExperiment:
         
         #Setup experiment
         self.setexp()
-
+        
         #Run Optimization loop
         self.start = time.time()
         self.run_time = []
@@ -468,7 +478,7 @@ class BOExperiment:
         self.BO_trace_space_log_x2 = []
         self.BO_trace_space_log_y2 = []
         self.BO_trace_space_log_z2 = []
-
+        
         if self.input['opt_stop'] == 'T':
             #run this if we want to stop the optimization after a threshold
             for i in range(self.N_BO_steps):
@@ -485,7 +495,7 @@ class BOExperiment:
                 self.BO_trace_space_log_x.append(self.params['x'])
                 self.BO_trace_space_log_y.append(self.params['y'])
                 self.BO_trace_space_log_z.append(self.params['z'])
-
+                
                 self.BO_trace_space_log_x2.append(self.params['x2'])
                 self.BO_trace_space_log_y2.append(self.params['y2'])
                 self.BO_trace_space_log_z2.append(self.params['z2'])
@@ -506,6 +516,8 @@ class BOExperiment:
                 self.BO_trace_space_log_x2.append(self.params['x2'])
                 self.BO_trace_space_log_y2.append(self.params['y2'])
                 self.BO_trace_space_log_z2.append(self.params['z2'])
+        BOExperiment.BO_en.append(self.ax_client.get_best_parameters()[1][0]['adsorption_energy'])
+        BOExperiment.BO_runtime.append(self.run_time[-1])
 
     def setexp(self):
         if self.input['opt_stop'] == 'T':
@@ -522,31 +534,37 @@ class BOExperiment:
                     "name": "x",
                     "type": "range",
                     "bounds": [float(self.cell_x_min), float(self.cell_x_max)],
+                    "value_type": "float",
                 },
                 {
                     "name": "y",
                     "type": "range",
                     "bounds": [float(self.cell_y_min), float(self.cell_y_max)],
+                    "value_type": "float",
                 },
                 {
                     "name": "z",
                     "type": "range",
-                    "bounds": [float(self.bulk_z_max), float(self.z_adsorb_max)], 
+                    "bounds": [float(self.bulk_z_max), float(self.z_adsorb_max)],
+                    "value_type": "float",
                 },
                         {
                     "name": "x2",
                     "type": "range",
                     "bounds": [float(self.cell_x_min), float(self.cell_x_max)],
+                    "value_type": "float",
                 },
                 {
                     "name": "y2",
                     "type": "range",
                     "bounds": [float(self.cell_y_min), float(self.cell_y_max)],
+                    "value_type": "float",
                 },
                 {
                     "name": "z2",
                     "type": "range",
-                    "bounds": [float(self.bulk_z_max), float(self.z_adsorb_max)], 
+                    "bounds": [float(self.bulk_z_max), float(self.z_adsorb_max)],
+                    "value_type": "float",
                 },
             ],
             #parameter_constraints=["((x-x2)+(y-y2)+(z-z2))**(1/2) >= 1"],  # For n_ads = 2
@@ -615,7 +633,7 @@ class BOExperiment:
         if self.input["save_fig"] == "T":
             self.df.to_csv(self.dfname, index=False)
             self.df_bo_space_trace.to_csv(self.df_bo_space_trace_name, index=False)
-    
+
     def generation_stragegy(self):
         gs = GenerationStrategy(
             steps=[
@@ -658,3 +676,11 @@ class BOExperiment:
             ]
         )
         return gs
+
+    @classmethod
+    def mean_BFGS(cls):
+        return np.mean(cls.BFGS_en), np.mean(cls.BFGS_runtime)
+
+    @classmethod
+    def mean_BO(cls):
+        return np.mean(cls.BO_en), np.mean(cls.BO_runtime)
