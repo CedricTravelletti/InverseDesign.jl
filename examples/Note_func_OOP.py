@@ -1,6 +1,7 @@
 import numpy as np
 from ase.build import bulk
 import torch
+import itertools
 
 import gpytorch
 from matplotlib import pyplot as plt
@@ -24,8 +25,9 @@ from gpytorch.mlls.sum_marginal_log_likelihood import ExactMarginalLogLikelihood
 
 # Check if CUDA is available and set PyTorch device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cpu")
 
-# Define the dGP to include forces
+## Define the dGP to include forces
 class GPWithDerivatives(GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
     def __init__(
         self,
@@ -38,27 +40,31 @@ class GPWithDerivatives(GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
         outcome_transform: Optional[OutcomeTransform] = None,
         input_transform: Optional[InputTransform] = None,
     ) -> None:
+        
         # Dimension of model
-        dim = train_X.shape[-1] 
+        dim = train_X.shape[-1]
+        self.train_X = train_X 
         # Multi-dimensional likelihood since we're modeling a function and its gradient
-        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=1 + dim)
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=1+dim)
         super().__init__(train_X, train_Y, likelihood)
         # Gradient-enabled mean
         self.mean_module = gpytorch.means.ConstantMeanGrad() 
         # Gradient-enabled kernel
         self.base_kernel = gpytorch.kernels.RBFKernelGrad( 
             ard_num_dims=dim, # Separate lengthscale for each input dimension
-        )
+            )
         # Adds lengthscale to the kernel
         self.covar_module = gpytorch.kernels.ScaleKernel(self.base_kernel)
         # Output dimension is 1 (function value) + dim (number of partial derivatives)
-        self._num_outputs = 1 + dim
+        self._num_outputs = 1+dim
         # Used to extract function value and not gradients during optimization
         self.scale_tensor = torch.tensor([1.0] + [0.0]*dim, dtype=torch.double)
 
     def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
+        mean_x = self.mean_module(x).to(device)
+        covar_x = self.covar_module(x).to(device)
+        print(mean_x.shape)
+        print(covar_x.shape)
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 # ## Set up evaluation function (pipe to ASE) for trial parameters suggested by Ax. 
@@ -94,6 +100,8 @@ from ase.optimize import BFGS
 from ase.io.trajectory import Trajectory
 import ase.io
 from ase.io import read, write
+from ase.collections import g2
+from ase.io.animation import write_mp4
 import pandas as pd
 from ax.global_stopping.strategies.improvement import ImprovementGlobalStoppingStrategy
 from ax.exceptions.core import OptimizationShouldStop
@@ -107,7 +115,9 @@ from ase.visualize.plot import plot_atoms
 from ase.calculators.emt import EMT
 from ase.calculators.lj import LennardJones
 from ase.calculators.eam import EAM
-
+from ax.core.optimization_config import OptimizationConfig
+from ax.core.objective import Objective
+from ax.core.metric import Metric
 
 class BOExperiment:
     number_of_exp = 0
@@ -116,7 +126,7 @@ class BOExperiment:
     BFGS_runtime = []
     BO_en = []
     BO_runtime = []
-    
+
     def __init__(self, expname):
         self.expname = expname
         self.input = self.input_()
@@ -141,9 +151,14 @@ class BOExperiment:
         return view(self.atoms, viewer='x3d')
 
     def best_view(self):
-        self.bv_params = self.ax_client.get_best_parameters()[:1][0]
-        self.atoms[-1].position[:] = self.bv_params['x'],self.bv_params['y'],self.bv_params['z']
-        self.atoms[-2].position[:] = self.bv_params['x2'],self.bv_params['y2'],self.bv_params['z2']
+        if self.input['mult_p'] == 'F':
+            self.bv_params = self.ax_client.get_best_parameters()[:1][0]
+            self.atoms[-1].position[:] = self.bv_params['x'],self.bv_params['y'],self.bv_params['z']
+            self.atoms[-2].position[:] = self.bv_params['x2'],self.bv_params['y2'],self.bv_params['z2']
+        elif self.input['mult_p'] == 'T':
+            self.bv_params = self.ax_client.get_pareto_optimal_parameters()[next(iter(self.ax_client.get_pareto_optimal_parameters()))]
+            self.atoms[-1].position[:] = self.bv_params[0]['x'],self.bv_params[0]['y'],self.bv_params[0]['z']
+            self.atoms[-2].position[:] = self.bv_params[0]['x2'],self.bv_params[0]['y2'],self.bv_params[0]['z2']
         return view(self.atoms, viewer='x3d')
 
     #Whole visualization of experiment
@@ -166,13 +181,13 @@ class BOExperiment:
         ax[2].set_xlabel("[$\mathrm{\AA}$]")
         ax[3].set_xlabel("[$\mathrm{\AA}$]")
         ax[1].set_title('BO Optimized Adsorption')
-        plot_atoms(self.atoms, ax[0], radii=0.5, rotation=('90x,45y,0z'), show_unit_cell=True)
-        plot_atoms(self.atoms, ax[1], radii=0.5, rotation=('0x,0y,0z'))
+        plot_atoms(self.atoms, ax[0], rotation=('90x,45y,0z'), show_unit_cell=True)
+        plot_atoms(self.atoms, ax[1], rotation=('0x,0y,0z'))
         #fig.savefig("ase_slab_BO.png")
         ax[2].set_title('BFGS Optimized Adsorption')
         ax[3].set_title('BFGS Optimized Adsorption')
         
-        ## Idea to plot several adsorbed atom solutions on the same plot ## TO DO
+        ## Idea to plot several adsorbed atom solutions on the same plot
         from ase import Atoms
         #get all the atom objects
         self.atoms_list = [] #list of atoms objects
@@ -183,13 +198,13 @@ class BOExperiment:
             # Create a new Atoms object with only the last atom
             self.last_atom_obj = Atoms([self.last_atom])
             #plot the last atom (adsorbed atom)
-            plot_atoms(self.last_atom_obj, ax[0], radii=0.5, rotation=('90x,45y,0z'), show_unit_cell=True)
+            plot_atoms(self.last_atom_obj, ax[0], rotation=('90x,45y,0z'), show_unit_cell=True)
         
         self.atoms_BFGS = self.atoms.copy()
         self.atoms_BFGS[-1].position[:] = self.BFGS_params[0],self.BFGS_params[1],self.BFGS_params[2]
         self.atoms_BFGS[-2].position[:] = self.BFGS_params2[0],self.BFGS_params2[1],self.BFGS_params2[2]
-        plot_atoms(self.atoms_BFGS, ax[2], radii=0.5, rotation=('90x,45y,0z'), show_unit_cell=True)
-        plot_atoms(self.atoms_BFGS, ax[3], radii=0.5, rotation=('0x,0y,0z'))
+        plot_atoms(self.atoms_BFGS, ax[2], rotation=('90x,45y,0z'), show_unit_cell=True)
+        plot_atoms(self.atoms_BFGS, ax[3], rotation=('0x,0y,0z'))
         
         self.filename = f"{self.folder_name}/ase_ads_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_{self.curr_date_time}.png"
         if self.input["save_fig"] == "T":
@@ -205,8 +220,8 @@ class BOExperiment:
         ax[2].set_xlabel("[$\mathrm{\AA}$]")
         ax[3].set_xlabel("[$\mathrm{\AA}$]")
         ax[1].set_title('BO Optimized Adsorption')
-        plot_atoms(self.atoms, ax[0], radii=0.5, rotation=('90x,45y,0z'))
-        plot_atoms(self.atoms, ax[1], radii=0.5, rotation=('0x,0y,0z'))
+        plot_atoms(self.atoms, ax[0], rotation=('90x,45y,0z'))
+        plot_atoms(self.atoms, ax[1], rotation=('0x,0y,0z'))
         #fig.savefig("ase_slab_BO.png")
         ax[2].set_title('BFGS Optimized Adsorption')
         ax[3].set_title('BFGS Optimized Adsorption')
@@ -214,8 +229,8 @@ class BOExperiment:
         self.atoms_BFGS = self.atoms.copy()
         self.atoms_BFGS[-1].position[:] = self.BFGS_params[0],self.BFGS_params[1],self.BFGS_params[2]
         self.atoms_BFGS[-2].position[:] = self.BFGS_params2[0],self.BFGS_params2[1],self.BFGS_params2[2]
-        plot_atoms(self.atoms_BFGS, ax[2], radii=0.5, rotation=('90x,45y,0z'))
-        plot_atoms(self.atoms_BFGS, ax[3], radii=0.5, rotation=('0x,0y,0z'))
+        plot_atoms(self.atoms_BFGS, ax[2], rotation=('90x,45y,0z'))
+        plot_atoms(self.atoms_BFGS, ax[3], rotation=('0x,0y,0z'))
         
         self.filename = f"{self.folder_name}/ase_ads_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_vacuum_{self.curr_date_time}.png"
         if self.input["save_fig"] == "T":
@@ -223,8 +238,12 @@ class BOExperiment:
 
     def learned_resp_surface(self):
         self.model = self.ax_client.generation_strategy.model
-        return render(interact_contour(model=self.model, metric_name="adsorption_energy",
-            slice_values={'x': self.params['x'], 'y': self.params['y'], 'z': self.params['z']}))
+        if self.input['mult_p'] == 'T':
+            return render(interact_contour(model=self.model, metric_name="adsorption_energy",
+                slice_values={'x': self.params[0]['x'], 'y': self.params[0]['y'], 'z': self.params[0]['z']}))
+        elif self.input['mult_p'] == 'F':
+            return render(interact_contour(model=self.model, metric_name="adsorption_energy",
+                slice_values={'x': self.params['x'], 'y': self.params['y'], 'z': self.params['z']}))
 
     def ads_trace_view(self):
         # Plot the optimization trace vs steps
@@ -294,7 +313,7 @@ class BOExperiment:
             self.atoms_copy.rotate(45, 'y')
             self.traj_rot.write(self.atoms_copy)
             
-            self.trial_atom = Atoms('O', positions=[[self.df['x'][i], self.df['y'][i], self.df['z'][i]]])
+            self.trial_atom = Atoms('B', positions=[[self.df['x'][i], self.df['y'][i], self.df['z'][i]]])
             self.trial_atom.set_cell(self.atoms.get_cell())
             self.trial_atom.set_pbc(self.atoms.get_pbc())
             self.traj_trial.write(self.trial_atom)
@@ -305,7 +324,7 @@ class BOExperiment:
             self.trial_copy.rotate(45, 'y')
             self.traj_trial_rot.write(self.trial_copy)
             
-            self.trial_atom2 = Atoms('O', positions=[[self.df['x2'][i], self.df['y2'][i], self.df['z2'][i]]])
+            self.trial_atom2 = Atoms('B', positions=[[self.df['x2'][i], self.df['y2'][i], self.df['z2'][i]]])
             self.trial_atom2.set_cell(self.atoms.get_cell())
             self.trial_atom2.set_pbc(self.atoms.get_pbc())
             self.traj_trial2.write(self.trial_atom2)
@@ -332,7 +351,8 @@ class BOExperiment:
             self.combined_atoms_list.append(atoms + atoms_rot + trial_a + trial_a_rot + trial2_a + trial2_a_rot)
         
         if self.input["save_fig"] == "T":
-            ase.io.write(f'{self.folder_name}/BO_space_trace.gif', self.combined_atoms_list, interval=800) #Could save as video as well
+            ase.io.write(f'{self.folder_name}/BO_space_trace', self.combined_atoms_list, "mp4", interval=800)
+            #write_mp4(f'{self.folder_name}/BO_space_trace.mp4', self.combined_atoms_list, interval=800)
 
     def review_input(self):
         return print(self.input)
@@ -363,15 +383,17 @@ class BOExperiment:
         self.atoms.cell *= (self.atoms.v / self.atoms.get_volume())**(1/3)
         return self.atoms.get_potential_energy()
 
-    def Add_adsorbant(self):
+    def pre_ads(self):
         self.a = self.atoms.cell[0, 1] * 2
         self.n_layers = self.input['number_of_layers']
         self.atoms = fcc111(self.input['surface_atom'], (self.input['supercell_x_rep'], self.input['supercell_y_rep'], self.n_layers), a=self.a)
-        
+
+    def add_adsorbant(self):
+        self.pre_ads()
         self.ads_height = float(self.input['adsorbant_init_h'])
         self.n_ads = self.input['number_of_ads']
         self.ads = self.input['adsorbant_atom']
-        for i in range(self.n_ads): #not yet supported by BO, supported for BFGS
+        for i in range(self.n_ads): #not yet supported by BO, supported for BFGS -- now supported by BO for 2 atoms
             if self.input['ads_init_pos'] == 'random':
                 self.poss = (self.a + self.a*random.random()*self.input['supercell_x_rep']/2, self.a + self.a*random.random()*self.input['supercell_y_rep']/2)
             else:
@@ -427,9 +449,10 @@ class BOExperiment:
             self.bfgs_combined_atoms_list.append(atoms_bfgs + atoms_rot)
         
         if self.input["save_fig"] == "T":
-            ase.io.write(f'{self.folder_name}/BFGS_traj.gif', self.bfgs_combined_atoms_list, interval=100) #Could save as video as well
+            #ase.io.write(f'{self.folder_name}/BFGS_traj.gif', self.bfgs_combined_atoms_list, interval=100) #Could save as video as well
+            ase.io.animation.write_mp4(f'{self.folder_name}/BFGS_traj', self.bfgs_combined_atoms_list, interval=100)
 
-    def build_save_path(self):
+    def build_save_path(self): # Not used yet
         #Create the folder for the experiment
         if not os.path.exists(self.folder_name):
             os.makedirs(self.folder_name)
@@ -454,14 +477,49 @@ class BOExperiment:
         pass
 
     def Response_surface(self):
-        # To add later
-        pass
+        self.atoms.calc = EMT()
+        filtered_atoms_1 = self.atoms[self.atoms.get_tags() == 1]
+        filtered_atoms_2 = self.atoms[self.atoms.get_tags() == 2]
+        filtered_atoms_3 = self.atoms[self.atoms.get_tags() == 3]
+        xmin, xmax = float(np.min(self.atoms.positions[:, 0])), float(np.max(self.atoms.positions[:, 0]))
+        ymin, ymax = float(np.min(self.atoms.positions[:, 1])), float(np.max(self.atoms.positions[:, 1]))
+        x = np.linspace(xmin, xmax, 100)
+        y = np.linspace(ymin, ymax, 100)
+        z = [14.65557600]
+        
+        #Make a list of positions x,y,z
+        positions = list(itertools.product(x, y, z))
+        #Calculate the energy of each position
+        energies = []
+        for position in positions:
+            self.atoms.positions[-1] = position
+            energy = self.atoms.get_potential_energy()
+            energies.append(energy)
+        #Reshape E and check
+        E = np.array(energies).reshape(len(x),len(y), order = 'F') #Issue was the reshaping was accounting the wrong order 
+        #was using a C-like index order, but the correct one is Fortran-like index order
+        # 2D plot
+        plt.figure()
+        plt.contourf(x, y, E, levels=100, label = 'Energy')
+        plt.colorbar()
+        plt.xlabel('x')
+        plt.ylabel('y')
+        # Make it so x and y are on the same scale
+        plt.gca().set_aspect('equal', adjustable='box')
+        # Plot the filtered atom positions
+        plt.scatter(filtered_atoms_1.positions[:, 0], filtered_atoms_1.positions[:, 1], c='red', label = 'Layer 1')
+        plt.scatter(filtered_atoms_2.positions[:, 0], filtered_atoms_2.positions[:, 1], c='blue', label = 'Layer 2')
+        plt.scatter(filtered_atoms_3.positions[:, 0], filtered_atoms_3.positions[:, 1], c='green', label = 'Layer 3')
+        plt.legend()
+        plt.show()
+
+
 
     def BO(self):
         self.bulk_z_max = np.max(self.atoms[:-self.n_ads].positions[:, 2]) #modified to account for changes in initial conditions + universal
         self.cell_x_min, self.cell_x_max = float(np.min(self.atoms.cell[:, 0])), float(np.max(self.atoms.cell[:, 0]))
         self.cell_y_min, self.cell_y_max = float(np.min(self.atoms.cell[:, 1])), float(np.max(self.atoms.cell[:, 1]))
-        self.z_adsorb_max = self.atoms[-1].position[-1] # modified to account for changes in initial conditions
+        self.z_adsorb_max = np.max([self.atoms[-1].position[-1], self.atoms[-2].position[-1]]) # modified to account for changes in initial conditions
         
         #Setup experiment
         self.setexp()
@@ -483,43 +541,84 @@ class BOExperiment:
             #run this if we want to stop the optimization after a threshold
             for i in range(self.N_BO_steps):
                 try: 
-                    parameters, trial_index = self.ax_client.get_next_trial()
+                    parameters, trial_index = self.ax_client.get_next_trial() #Use .get_next_trials() for parallel optimization
                 except OptimizationShouldStop as exc:
                     print(exc.message)
                     break
                 # Local evaluation here can be replaced with deployment to external system.
                 self.ax_client.complete_trial(trial_index=trial_index, raw_data=self.evaluate_OOP(parameters))
                 self.run_time.append(time.time() - self.start)
-                #Store current BO trajectory
-                self.params = self.ax_client.get_best_parameters()[:1][0]
-                self.BO_trace_space_log_x.append(self.params['x'])
-                self.BO_trace_space_log_y.append(self.params['y'])
-                self.BO_trace_space_log_z.append(self.params['z'])
-                
-                self.BO_trace_space_log_x2.append(self.params['x2'])
-                self.BO_trace_space_log_y2.append(self.params['y2'])
-                self.BO_trace_space_log_z2.append(self.params['z2'])
-        
+                if self.input['mult_p'] == 'T':
+                    #Store current BO trajectory
+                    self.params = self.ax_client.get_pareto_optimal_parameters()[next(iter(self.ax_client.get_pareto_optimal_parameters()))]
+                    print(type(self.params))
+                    print(self.params)
+                    
+                    self.BO_trace_space_log_x.append(self.params[0]['x'])
+                    self.BO_trace_space_log_y.append(self.params[0]['y'])
+                    self.BO_trace_space_log_z.append(self.params[0]['z'])
+                    
+                    self.BO_trace_space_log_x2.append(self.params[0]['x2'])
+                    self.BO_trace_space_log_y2.append(self.params[0]['y2'])
+                    self.BO_trace_space_log_z2.append(self.params[0]['z2'])
+                    BOExperiment.BO_en.append(self.params[1][0]['adsorption_energy'])
+                elif self.input['mult_p'] == 'F':
+                    self.params = self.ax_client.get_best_parameters()[:1][0]
+                    print(type(self.params))
+                    print(self.params)
+                    
+                    self.BO_trace_space_log_x.append(self.params['x'])
+                    self.BO_trace_space_log_y.append(self.params['y'])
+                    self.BO_trace_space_log_z.append(self.params['z'])
+                    
+                    self.BO_trace_space_log_x2.append(self.params['x2'])
+                    self.BO_trace_space_log_y2.append(self.params['y2'])
+                    self.BO_trace_space_log_z2.append(self.params['z2'])
+                    BOExperiment.BO_en.append(self.ax_client.get_best_parameters()[1][0]['adsorption_energy'])
+                    
         elif self.input['opt_stop'] == 'F':
             #run this if we want to run the optimization for a fixed number of steps
             for i in range(self.N_BO_steps):
-                parameters, trial_index = self.ax_client.get_next_trial()
+                parameters, trial_index = self.ax_client.get_next_trial() #Use .get_next_trials() for parallel optimization, still not sure how to make it work
                 # Local evaluation here can be replaced with deployment to external system.
                 self.ax_client.complete_trial(trial_index=trial_index, raw_data=self.evaluate_OOP(parameters))
                 self.run_time.append(time.time() - self.start)
                 #Store current BO trajectory
-                self.params = self.ax_client.get_best_parameters()[:1][0]
-                self.BO_trace_space_log_x.append(self.params['x'])
-                self.BO_trace_space_log_y.append(self.params['y'])
-                self.BO_trace_space_log_z.append(self.params['z'])
-                
-                self.BO_trace_space_log_x2.append(self.params['x2'])
-                self.BO_trace_space_log_y2.append(self.params['y2'])
-                self.BO_trace_space_log_z2.append(self.params['z2'])
-        BOExperiment.BO_en.append(self.ax_client.get_best_parameters()[1][0]['adsorption_energy'])
+                if self.input['mult_p'] == 'T':
+                    #Store current BO trajectory
+                    self.params = self.ax_client.get_pareto_optimal_parameters()[next(iter(self.ax_client.get_pareto_optimal_parameters()))]
+                    print(type(self.params))
+                    print(self.params)
+                    
+                    self.BO_trace_space_log_x.append(self.params[0]['x'])
+                    self.BO_trace_space_log_y.append(self.params[0]['y'])
+                    self.BO_trace_space_log_z.append(self.params[0]['z'])
+                    
+                    self.BO_trace_space_log_x2.append(self.params[0]['x2'])
+                    self.BO_trace_space_log_y2.append(self.params[0]['y2'])
+                    self.BO_trace_space_log_z2.append(self.params[0]['z2'])
+                    BOExperiment.BO_en.append(self.params[1][0]['adsorption_energy'])
+                    
+                elif self.input['mult_p'] == 'F':
+                    self.params = self.ax_client.get_best_parameters()[:1][0]
+                    print(type(self.params))
+                    print(self.params)
+                    
+                    self.BO_trace_space_log_x.append(self.params['x'])
+                    self.BO_trace_space_log_y.append(self.params['y'])
+                    self.BO_trace_space_log_z.append(self.params['z'])
+                    
+                    self.BO_trace_space_log_x2.append(self.params['x2'])
+                    self.BO_trace_space_log_y2.append(self.params['y2'])
+                    self.BO_trace_space_log_z2.append(self.params['z2'])
+                    BOExperiment.BO_en.append(self.ax_client.get_best_parameters()[1][0]['adsorption_energy'])
         BOExperiment.BO_runtime.append(self.run_time[-1])
 
     def setexp(self):
+        if self.input['mult_p'] == 'T':
+            self.objectives={"adsorption_energy": ObjectiveProperties(minimize=True), "dx": ObjectiveProperties(minimize=True), "dy": ObjectiveProperties(minimize=True), "dz": ObjectiveProperties(minimize=True), "dx2": ObjectiveProperties(minimize=True), "dy2": ObjectiveProperties(minimize=True), "dz2": ObjectiveProperties(minimize=True)}
+        elif self.input['mult_p'] == 'F':
+            self.objectives={"adsorption_energy": ObjectiveProperties(minimize=True)}
         if self.input['opt_stop'] == 'T':
             self.stopping_strategy = ImprovementGlobalStoppingStrategy(
             min_trials=5 + 5, window_size=5, improvement_bar=0.01
@@ -567,8 +666,10 @@ class BOExperiment:
                     "value_type": "float",
                 },
             ],
-            #parameter_constraints=["((x-x2)+(y-y2)+(z-z2))**(1/2) >= 1"],  # For n_ads = 2
-            objectives={"adsorption_energy": ObjectiveProperties(minimize=True)},
+            parameter_constraints=["x - x2 + y - y2 + z - z2 <= 1.5", "x - x2 + y - y2 + z - z2 >= -1.5"],  # For n_ads = 2
+            #parameter_constraints=["((x-x2)**2+(y-y2)**2+(z-z2)**2)**(1/2) <= 2"],  # For n_ads = 2
+            #objectives={"adsorption_energy": ObjectiveProperties(minimize=True), "dx": ObjectiveProperties(minimize=True), "dy": ObjectiveProperties(minimize=True), "dz": ObjectiveProperties(minimize=True), "dx2": ObjectiveProperties(minimize=True), "dy2": ObjectiveProperties(minimize=True), "dz2": ObjectiveProperties(minimize=True)},
+            objectives=self.objectives,
             # outcome_constraints=["l2norm <= 1.25"],  # Optional.
         )
 
@@ -583,11 +684,33 @@ class BOExperiment:
         # Can put zeros since constraints are respected by set_positions.
         new_pos = torch.vstack([torch.zeros((len(self.atoms) - self.input['number_of_ads'], 3), device = device), x, x2])
         self.atoms.set_positions(new_pos.cpu().numpy(), apply_constraint=True)
-        self.energy = self.atoms.get_potential_energy()
-        dx,dy,dz = self.atoms.get_forces()[-2]
-        dx2,dy2,dz2 = self.atoms.get_forces()[-1]
+        self.energy = torch.tensor(self.atoms.get_potential_energy(), device=device)
+        #dx,dy,dz = torch.abs(torch.tensor(self.atoms.get_forces()[-2], device = device))
+        #dx2,dy2,dz2 = torch.abs(torch.tensor(self.atoms.get_forces()[-1]))
+        dx,dy,dz = torch.tensor(self.atoms.get_forces()[-2], device = device)
+        dx2,dy2,dz2 = torch.tensor(self.atoms.get_forces()[-1], device = device)
         # In our case, standard error is 0, since we are computing a synthetic function.
-        return {"adsorption_energy": (self.energy, 0.0)} # We have 0 noise on the target.
+        return {"adsorption_energy": (self.energy, 0.0), "dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0), "dx2": (dx2, 0.0), "dy2": (dy2, 0.0), "dz2": (dz2, 0.0)} # We have 0 noise on the target.
+        #return {"adsorption_energy": (energy, 0.0),"dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0), "dx2": (dx2, 0.0), "dy2": (dy2, 0.0), "dz2": (dz2, 0.0)} # We have 0 noise on the target.
+
+    def evaluate_OOP_mol3(self, parameters): #To Do
+        x = torch.tensor([parameters.get(f"x"), parameters.get(f"y"), parameters.get(f"z")], device = device) # Position of C
+        # Need a second angle, the one between the plane defined by the molecule and the plane defined by the surface --> How 
+        # to define this ?? cross or dot product?
+        # Make O1 follow C x1 = ...
+        # Make O2 follow C x2 = ...
+        # Set angle between O1-C-O2 = parameters.get(f"angle") something like that
+        # Set new C position and O1 and O2 follow
+        new_pos = torch.vstack([torch.zeros((len(self.atoms) - self.input['number_of_ads'], 3), device = device), x])
+        # new angle = ;set_angle ...
+        self.atoms.set_positions(new_pos.cpu().numpy(), apply_constraint=True)
+        # new angle = ;set_angle ...
+        self.energy = torch.tensor(self.atoms.get_potential_energy(), device=device)
+        #dx,dy,dz = torch.abs(torch.tensor(self.atoms.get_forces()[-2], device = device))
+        dx,dy,dz = torch.tensor(self.atoms.get_forces()[-2], device = device)
+        #dTheta = 
+        # In our case, standard error is 0, since we are computing a synthetic function.
+        return {"adsorption_energy": (self.energy, 0.0), "dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0), "dTheta": (dTheta, 0.0)} # We have 0 noise on the target.
         #return {"adsorption_energy": (energy, 0.0),"dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0), "dx2": (dx2, 0.0), "dy2": (dy2, 0.0), "dz2": (dz2, 0.0)} # We have 0 noise on the target.
 
     #Save experiment and Ax client as JSON file 
@@ -598,10 +721,11 @@ class BOExperiment:
     def save_exp_csv(self):
         #Build result dataframe
         self.df = self.ax_client.get_trials_data_frame()
-        self.df['bo_trace'] = self.ax_client.get_trace()
+        # Get the trace only accounting for adsorption energy
+        self.optimization_config = OptimizationConfig(objective=Objective(metric=Metric("adsorption_energy"), minimize=True)) # Base the trace on adsorption energy and not the default which is a combination of all objectives
+        self.df['bo_trace'] = self.ax_client.get_trace(optimization_config=self.optimization_config)
         self.df["run_time"] = self.run_time
-        self.df["BFGS_runtime"] = self.BFGS_runtime
-        self.params = self.ax_client.get_best_parameters()[:1][0]
+        self.df["BFGS_runtime"] = self.BFGS_runtime        
         
         self.df['opt_bfgs_x']= self.BFGS_params[0]
         self.df['opt_bfgs_y']= self.BFGS_params[1]
@@ -611,14 +735,25 @@ class BOExperiment:
         self.df['opt_bfgs_y2']= self.BFGS_params2[1]
         self.df['opt_bfgs_z2']= self.BFGS_params2[2]
         
-        self.df['opt_bo_x']= self.params['x']
-        self.df['opt_bo_y']= self.params['y']
-        self.df['opt_bo_z']= self.params['z']
-        
-        self.df['opt_bo_x2']= self.params['x2']
-        self.df['opt_bo_y2']= self.params['y2']
-        self.df['opt_bo_z2']= self.params['z2']
-        
+        if self.input['mult_p'] == 'T':
+            self.params = self.ax_client.get_pareto_optimal_parameters()[next(iter(self.ax_client.get_pareto_optimal_parameters()))]
+            
+            self.df['opt_bo_x']= self.params[0]['x']
+            self.df['opt_bo_y']= self.params[0]['y']
+            self.df['opt_bo_z']= self.params[0]['z']
+            
+            self.df['opt_bo_x2']= self.params[0]['x2']
+            self.df['opt_bo_y2']= self.params[0]['y2']
+            self.df['opt_bo_z2']= self.params[0]['z2']
+        elif self.input['mult_p'] == 'F':
+            self.params = self.ax_client.get_best_parameters()[:1][0]
+            self.df['opt_bo_x']= self.params['x']
+            self.df['opt_bo_y']= self.params['y']
+            self.df['opt_bo_z']= self.params['z']
+            
+            self.df['opt_bo_x2']= self.params['x2']
+            self.df['opt_bo_y2']= self.params['y2']
+            self.df['opt_bo_z2']= self.params['z2']
         self.df['opt_bo_energy'] = self.ax_client.get_best_parameters()[1][0]['adsorption_energy']
         self.df['opt_bfgs_energy'] = self.bfgs_en        
         
@@ -657,18 +792,19 @@ class BOExperiment:
                         "torch_device": device,
                         "surrogate": Surrogate(
                                                 # BoTorch `Model` type
-                                                botorch_model_class=SingleTaskGP,
+                                                botorch_model_class=str_to_class(self.input['bo_surrogate']),
                                                 # Optional, MLL class with which to optimize model parameters
                                                 mll_class=ExactMarginalLogLikelihood,
                                                 # Optional, dictionary of keyword arguments to underlying
                                                 # BoTorch `Model` constructor
                                                 model_options={"torch_device": device},
                                                 ),
+                        #"botorch_acqf_class": str_to_class(self.input['bo_acquisition_f']),
                         "botorch_acqf_class": str_to_class(self.input['bo_acquisition_f']),
                         #"acquisition_options": {"torch_device": device},
                         #"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*input["number_of_ads"]*3, dtype=torch.double)),
                                 },  # Any kwargs you want passed into the model
-                    model_gen_kwargs={"torch_device": device},
+                    #model_gen_kwargs={"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
                     # Parallelism limit for this step, often lower than for Sobol
                     # More on parallelism vs. required samples in BayesOpt:
                     # https://ax.dev/docs/bayesopt.html#tradeoff-between-parallelism-and-total-number-of-trials
@@ -684,3 +820,18 @@ class BOExperiment:
     @classmethod
     def mean_BO(cls):
         return np.mean(cls.BO_en), np.mean(cls.BO_runtime)
+
+    def add_molecule(self):
+        self.pre_ads()
+        self.molecule = g2[self.input['adsorbant_molecule']]
+        self.n_ads = len(self.molecule)
+        self.ads_height = float(self.input['adsorbant_init_h']) #TO CHANGE
+        if self.input['ads_init_pos'] == 'random':
+            self.poss = (self.a + self.a*random.random()*self.input['supercell_x_rep']/2, self.a + self.a*random.random()*self.input['supercell_y_rep']/2)
+        else:
+            self.poss = self.input['ads_init_pos']
+        add_adsorbate(self.atoms, self.molecule, height=self.ads_height, position=self.poss)
+        self.atoms.center(vacuum = self.input['supercell_vacuum'], axis = 2) 
+        # Constrain all atoms except the adsorbate:
+        self.fixed = list(range(len(self.atoms) - len(self.molecule)))
+        self.atoms.constraints = [FixAtoms(indices=self.fixed)]
