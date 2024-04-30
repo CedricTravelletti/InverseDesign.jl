@@ -1,22 +1,26 @@
 # Any atom
 surface_atom : Cu
 lattice : fcc
-# Bridge, fcc, ontop, random
-ads_init_pos : random
+# bridge, fcc, ontop, random
+ads_init_pos : bridge
 number_of_ads : 1
-number_of_layers : 3
+number_of_layers : 5
 supercell_x_rep : 4
 supercell_y_rep : 4
-supercell_vacuum : 10
+supercell_vacuum : 5
 calc_method : EMT
 # Any atom
 adsorbant_atom : C
-adsorbant_init_h : 3
-bo_surrogate : FixedNoiseGP
-bo_acquisition_f : knowledge_gradient
+adsorbant_init_h : 2
+bo_surrogate : SingleTaskGP
+bo_acquisition_f : qNoisyExpectedImprovement
+num_fantasies : 5
 gs_init_steps : 5
-n_bo_steps : 40
+n_bo_steps : 20
+adsorbant_molecule : CO
+bounds : 2
 #F or T
 opt_stop : F
 save_fig : T
 dyn_z_const : F
+mult_p : T
