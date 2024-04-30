@@ -108,3 +108,8 @@ function gamma_point_bandgap(calculator::DFTKCalculator, system::AbstractSystem,
     vi = valence_band_index(scfres_dual)
     scfres_dual.eigenvalues[1][vi + 1] - scfres_dual.eigenvalues[1][vi]
 end
+function gamma_point_bandgap(calculator::DFTKCalculator, system::AbstractSystem, positions_flat::ComponentVector)
+    scfres_dual = compute_scf_dual(calculator, system, positions_flat)
+    vi = valence_band_index(scfres_dual)
+    scfres_dual.eigenvalues[1][vi + 1] - scfres_dual.eigenvalues[1][vi]
+end
