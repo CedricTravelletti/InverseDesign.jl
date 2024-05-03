@@ -12,6 +12,7 @@ using DFTK
 using GeometryOptimization
 using Unitful
 using UnitfulAtomic
+using LinearAlgebra
 using ComponentArrays
 
 function flatten(vector)
@@ -50,10 +51,10 @@ Arguments:
 """
 function compute_scf_dual(calculator::DFTKCalculator,
 		               system::AbstractSystem, positions::ComponentVector)
-    deformation_tensor = I + voigt_to_full(positions.strain)
+    deformation_tensor = I + GeometryOptimization.voigt_to_full(positions.strain)
     positions = [collect((x for x in deformation_tensor * position))
 		 for position in unflatten(positions.atoms)]
-    lattice = matrix_to_bbox(deformation_tensor * bbox_to_matrix(bounding_box(system)))
+    lattice = collect.(deformation_tensor * bbox_to_matrix(bounding_box(system)))
     # Original model. Symmetries disabled for differentiability.
     model = model_DFT(system; symmetries=false, calculator.params.model_kwargs...)
     new_model = Model(model; positions, lattice)
