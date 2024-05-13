@@ -2,7 +2,6 @@
 using DFTK
 using ForwardDiff
 using ComponentArrays
-using InverseDesign
 
 
 system = construct_silicon()
