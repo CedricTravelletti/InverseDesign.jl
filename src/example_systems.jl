@@ -5,6 +5,7 @@ using DFTK
 using Unitful
 using UnitfulAtomic
 
+
 function construct_silicon()
     a = 5.431u"angstrom"
     lattice = a / 2 * [[0 1 1.];

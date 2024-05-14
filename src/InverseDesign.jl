@@ -10,6 +10,4 @@ include("differentiable_objectives.jl")
 export construct_silicon, construct_diamond
 include("example_systems.jl")
 
-include("python_helpers.jl")
-
 end

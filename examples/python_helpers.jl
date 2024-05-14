@@ -1,4 +1,5 @@
 # Helper functions for Jupyter notebooks.
+using InverseDesign
 using DFTK
 using ForwardDiff
 using ComponentArrays
