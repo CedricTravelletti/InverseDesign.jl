@@ -96,11 +96,9 @@ import sys
 def str_to_class(classname):
     return getattr(sys.modules[__name__], classname)
 
-
 # Check if CUDA is available and set PyTorch device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #device = torch.device("cpu")
-
 
 class BOExperiment(plotter, experiment_setup):
     number_of_exp = 0
@@ -429,26 +427,6 @@ class BOExperiment(plotter, experiment_setup):
                 return {"adsorption_energy": (self.energy, 0.0), "dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0)} # We have 0 noise on the target.
         elif self.input['mult_p'] == 'F':
             return {"adsorption_energy": (self.energy, 0.0)} # We have 0 noise on the target.
-
-    def evaluate_OOP_mol3(self, parameters): #To Do later
-        x = torch.tensor([parameters.get(f"x"), parameters.get(f"y"), parameters.get(f"z")], device = device) # Position of C
-        # Need a second angle, the one between the plane defined by the molecule and the plane defined by the surface --> How 
-        # to define this ?? cross or dot product?
-        # Make O1 follow C x1 = ...
-        # Make O2 follow C x2 = ...
-        # Set angle between O1-C-O2 = parameters.get(f"angle") something like that
-        # Set new C position and O1 and O2 follow
-        new_pos = torch.vstack([torch.zeros((len(self.atoms) - self.input['number_of_ads'], 3), device = device), x])
-        # new angle = ;set_angle ...
-        self.atoms.set_positions(new_pos.cpu().numpy(), apply_constraint=True)
-        # new angle = ;set_angle ...
-        self.energy = torch.tensor(self.atoms.get_potential_energy(), device=device)
-        #dx,dy,dz = torch.abs(torch.tensor(self.atoms.get_forces()[-2], device = device))
-        dx,dy,dz = torch.tensor(self.atoms.get_forces()[-2], device = device)
-        #dTheta = 
-        # In our case, standard error is 0, since we are computing a synthetic function.
-        return {"adsorption_energy": (self.energy, 0.0), "dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0), "dTheta": (dTheta, 0.0)} # We have 0 noise on the target.
-        #return {"adsorption_energy": (energy, 0.0),"dx": (dx, 0.0), "dy": (dy, 0.0), "dz": (dz, 0.0), "dx2": (dx2, 0.0), "dy2": (dy2, 0.0), "dz2": (dz2, 0.0)} # We have 0 noise on the target.
 
     def save_exp_json(self):#Save experiment and Ax client as JSON file
         self.ax_client.save_to_json_file(filepath= f"{self.folder_name}/ase_ads_DF_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_{self.curr_date_time}.json")
