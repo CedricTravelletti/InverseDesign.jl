@@ -28,6 +28,11 @@ bandgaps_grad = zeros(MMatrix{length(iterator), 2})
 for (i, x) in enumerate(iterator)
 	res = InverseDesign.gamma_point_bandgap_vs_strain12(collect(x))
 	bandgaps[i] = res[1]
-	bandgaps_gra[i, :] = res[2:]
+	bandgaps_grad[i, :] = res[2:]
+	if i % 10 == 0
+	    save_object("./data/bandgaps.jld2", bandgaps)
+	    save_object("./data/bandgaps_grad.jld2", bandgaps_grad)
+    end
 end
-save_object("./data/bandgaps.jld2", x)
+save_object("./data/bandgaps.jld2", bandgaps)
+save_object("./data/bandgaps_grad.jld2", bandgaps_grad)
