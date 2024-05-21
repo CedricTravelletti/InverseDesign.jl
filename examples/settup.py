@@ -38,6 +38,11 @@ class experiment_setup:
                 except ValueError:
                     # If not possible, store as string
                     self.input[key] = value
+        if self.input['number_of_ads'] == 1:
+            self.input['mol_soft_constraint'] = 'F'
+            self.input['plotted_atom'] = 0
+        if self.input['number_of_ads'] != 1:
+            self.input['ads_init_pos'] = 'random'
         return self.input
 
     def set_cells(self):

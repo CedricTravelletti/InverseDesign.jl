@@ -7,7 +7,6 @@ from matplotlib import pyplot as plt
 
 # Check if CUDA is available and set PyTorch device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#device = torch.device("cpu")
 
 import sys
 def str_to_class(classname):
@@ -23,68 +22,22 @@ from ax.utils.notebook.plotting import render
 from ax.plot.slice import _get_slice_predictions
 from ax.plot.contour import interact_contour
 from ase.visualize.plot import plot_atoms
+from ax.plot.contour import _get_contour_predictions
+
 from ase.calculators.emt import EMT
 from ase.calculators.lj import LennardJones
 from ase.calculators.eam import EAM
 from sklearn.neighbors import KNeighborsRegressor
-from ax.plot.contour import _get_contour_predictions
 from ax.core import arm, observation
 import imageio
 import os
+import re
 
 class plotter:
     def step_plotting(self, num_trial = 0): #record contour plots after every BO step
         self.slice_plot()
         self.contour_plot(num_trial=num_trial)
         self.slice_plot_resp_surface(num_trial=num_trial, fit = False)
-
-    def response_surface_init(self):
-        self.set_cells()
-        self.pre_ads()
-        self.add_adsorbant()
-        self.atoms.calc = EMT()
-        self.filtered_atoms_1 = self.atoms[self.atoms.get_tags() == 1]
-        self.filtered_atoms_2 = self.atoms[self.atoms.get_tags() == 2]
-        self.filtered_atoms_3 = self.atoms[self.atoms.get_tags() == 3]
-        xmin, xmax = float(np.min(self.atoms.positions[:, 0])), float(np.max(self.atoms.positions[:, 0]))
-        ymin, ymax = float(np.min(self.atoms.positions[:, 1])), float(np.max(self.atoms.positions[:, 1]))
-        self.x = np.linspace(xmin, xmax, 100)
-        self.y = np.linspace(ymin, ymax, 100)
-        self.z = [14.65557600]
-        #Make a list of positions x,y,z
-        positions = list(itertools.product(self.x, self.y, self.z))
-        #Calculate the energy of each position
-        self.energies = []
-        for position in positions:
-            self.atoms.positions[-1] = position
-            energy = self.atoms.get_potential_energy()
-            self.energies.append(energy)
-        #save self.energies to a csv file
-        np.savetxt('response_surface2.csv', self.energies, delimiter=',')
-        np.savetxt('surface_positions2.csv', positions, delimiter=',')
-        np.savetxt('x_response_surface2.csv', self.x, delimiter=',')
-        np.savetxt('y_response_surface2.csv', self.y, delimiter=',')
-
-    def Response_surface(self):
-        self.response_surface_init()
-        #Reshape E and check
-        E = np.array(self.energies).reshape(len(self.x),len(self.y), order = 'F') #Issue was the reshaping was accounting the wrong order 
-        # Save the E array to a csv file
-        #was using a C-like index order, but the correct one is Fortran-like index order
-        # 2D plot
-        plt.figure()
-        plt.contourf(self.x, self.y, E, levels=100, label = 'Energy')
-        plt.colorbar()
-        plt.xlabel('x')
-        plt.ylabel('y')
-        # Make it so x and y are on the same scale
-        plt.gca().set_aspect('equal', adjustable='box')
-        # Plot the filtered atom positions
-        plt.scatter(self.filtered_atoms_1.positions[:, 0], self.filtered_atoms_1.positions[:, 1], c='red', label = 'Layer 1')
-        plt.scatter(self.filtered_atoms_2.positions[:, 0], self.filtered_atoms_2.positions[:, 1], c='blue', label = 'Layer 2')
-        plt.scatter(self.filtered_atoms_3.positions[:, 0], self.filtered_atoms_3.positions[:, 1], c='green', label = 'Layer 3')
-        plt.legend()
-        plt.show()
 
     def plot_acqf(self, num_trial = 0):
         #create a folder to save the plots
@@ -93,59 +46,81 @@ class plotter:
             os.makedirs(self.folder_name_acqf)
         #plot the acquisition function
         num_trial = 6
+        atom = self.input['plotted_atom']
         for q in self.BO_models:
-            #x plot
-            self.acqf_eval_x = np.zeros(len(self.slice_x[4]))
-            for p in range(len(self.slice_x[4])):
-                a = arm.Arm({'x': self.slice_x[4][p], 'y': self.ax_client.get_trials_data_frame()['y'][num_trial], 'z':  self.ax_client.get_trials_data_frame()['z'][num_trial]})
-                b = observation.ObservationFeatures.from_arm(a)
-                self.acqf_eval_x[p] = q.evaluate_acquisition_function([b])[0]
-            #y plot
-            self.acqf_eval_y = np.zeros(len(self.slice_y[4]))
-            for p in range(len(self.slice_y[4])):
-                a = arm.Arm({'x': self.ax_client.get_trials_data_frame()['x'][num_trial], 'y': self.slice_y[4][p], 'z': self.ax_client.get_trials_data_frame()['z'][num_trial]})
-                b = observation.ObservationFeatures.from_arm(a)
-                self.acqf_eval_y[p] = q.evaluate_acquisition_function([b])[0]
-            #z plot
-            self.acqf_eval_z = np.zeros(len(self.slice_z[4]))
-            for p in range(len(self.slice_z[4])):
-                a = arm.Arm({'x': self.ax_client.get_trials_data_frame()['x'][num_trial], 'y': self.ax_client.get_trials_data_frame()['y'][num_trial], 'z': self.slice_z[4][p]})
-                b = observation.ObservationFeatures.from_arm(a)
-                self.acqf_eval_z[p] = q.evaluate_acquisition_function([b])[0]
-
+            if atom == 0:
+                #x plot
+                self.acqf_eval_x = np.zeros(len(self.slice_x[4]))
+                for p in range(len(self.slice_x[4])):
+                    a = arm.Arm({'x': self.slice_x[4][p], 'y': self.ax_client.get_trials_data_frame()['y'][num_trial], 'z':  self.ax_client.get_trials_data_frame()['z'][num_trial]})
+                    b = observation.ObservationFeatures.from_arm(a)
+                    self.acqf_eval_x[p] = q.evaluate_acquisition_function([b])[0]
+                #y plot
+                self.acqf_eval_y = np.zeros(len(self.slice_y[4]))
+                for p in range(len(self.slice_y[4])):
+                    a = arm.Arm({'x': self.ax_client.get_trials_data_frame()['x'][num_trial], 'y': self.slice_y[4][p], 'z': self.ax_client.get_trials_data_frame()['z'][num_trial]})
+                    b = observation.ObservationFeatures.from_arm(a)
+                    self.acqf_eval_y[p] = q.evaluate_acquisition_function([b])[0]
+                #z plot
+                self.acqf_eval_z = np.zeros(len(self.slice_z[4]))
+                for p in range(len(self.slice_z[4])):
+                    a = arm.Arm({'x': self.ax_client.get_trials_data_frame()['x'][num_trial], 'y': self.ax_client.get_trials_data_frame()['y'][num_trial], 'z': self.slice_z[4][p]})
+                    b = observation.ObservationFeatures.from_arm(a)
+                    self.acqf_eval_z[p] = q.evaluate_acquisition_function([b])[0]
+            elif atom != 0:
+                self.acqf_eval_x = np.zeros(len(self.slice_x[4]))
+                for p in range(len(self.slice_x[4])):
+                    a = arm.Arm({f'x{atom}': self.slice_x[4][p], f'y{atom}': self.ax_client.get_trials_data_frame()[f'y{atom}'][num_trial], f'z{atom}':  self.ax_client.get_trials_data_frame()[f'z{atom}'][num_trial]})
+                    b = observation.ObservationFeatures.from_arm(a)
+                    self.acqf_eval_x[p] = q.evaluate_acquisition_function([b])[0]
+                #y plot
+                self.acqf_eval_y = np.zeros(len(self.slice_y[4]))
+                for p in range(len(self.slice_y[4])):
+                    a = arm.Arm({f'x{atom}': self.ax_client.get_trials_data_frame()[f'x{atom}'][num_trial], f'y{atom}': self.slice_y[4][p], f'z{atom}': self.ax_client.get_trials_data_frame()[f'z{atom}'][num_trial]})
+                    b = observation.ObservationFeatures.from_arm(a)
+                    self.acqf_eval_y[p] = q.evaluate_acquisition_function([b])[0]
+                #z plot
+                self.acqf_eval_z = np.zeros(len(self.slice_z[4]))
+                for p in range(len(self.slice_z[4])):
+                    a = arm.Arm({f'x{atom}': self.ax_client.get_trials_data_frame()[f'x{atom}'][num_trial], f'y{atom}': self.ax_client.get_trials_data_frame()[f'y{atom}'][num_trial], f'z{atom}': self.slice_z[4][p]})
+                    b = observation.ObservationFeatures.from_arm(a)
+                    self.acqf_eval_z[p] = q.evaluate_acquisition_function([b])[0]
+                
+                
             #y,z fixed
             plt.plot(self.slice_plot_x, self.acqf_eval_x, color = "red", label = "BO model")
             plt.ylabel('Criterion Value')
-            plt.xlabel('x [A]')
+            plt.xlabel(f'x{atom} [A]')
             plt.xlim(0, self.jx)
             plt.grid()
             plt.legend()
-            plt.title(f'BO Acquisition criterion vs x, y = {self.ax_client.get_trials_data_frame()["y"][num_trial]:.3f} z = {self.ax_client.get_trials_data_frame()["z"][num_trial]:.3f}')
+            plt.title(f'BO Acquisition criterion vs x, y = {self.ax_client.get_trials_data_frame()["y"][num_trial]:.3f} z = {self.ax_client.get_trials_data_frame()["z"][num_trial]:.3f}, trial {num_trial}, atom {atom}')
             plt.savefig(f"{self.folder_name_acqf}/yfix_slice_acqf_{num_trial}.png", dpi=300)
             plt.show()
 
             #x,z fixed
             plt.plot(self.slice_plot_y, self.acqf_eval_y, color = "red", label = "BO model")
             plt.ylabel('Criterion Value')
-            plt.xlabel('y [A]')
+            plt.xlabel(f'y{atom} [A]')
             plt.xlim(0, self.jy)
             plt.grid()
             plt.legend()
-            plt.title(f'BO Acquisition criterion vs y, x = {self.ax_client.get_trials_data_frame()["x"][num_trial]:.3f} z = {self.ax_client.get_trials_data_frame()["z"][num_trial]:.3f}')
+            plt.title(f'BO Acquisition criterion vs y, x = {self.ax_client.get_trials_data_frame()["x"][num_trial]:.3f} z = {self.ax_client.get_trials_data_frame()["z"][num_trial]:.3f}, trial {num_trial}, atom {atom}')
             plt.savefig(f"{self.folder_name_acqf}/xfix_slice_acqf_{num_trial}.png", dpi=300)
             plt.show()
 
             #x,y fixed
             plt.plot(self.slice_plot_z, self.acqf_eval_z, color = "red", label = "BO model")
             plt.ylabel('Criterion Value')
-            plt.xlabel('z [A]')
+            plt.xlabel(f'z{atom} [A]')
             plt.grid()
             plt.legend()
-            plt.title(f'BO Acquisition criterion vs z, x = {self.ax_client.get_trials_data_frame()["x"][num_trial]:.3f} y = {self.ax_client.get_trials_data_frame()["y"][num_trial]:.3f}')
+            plt.title(f'BO Acquisition criterion vs z, x = {self.ax_client.get_trials_data_frame()["x"][num_trial]:.3f} y = {self.ax_client.get_trials_data_frame()["y"][num_trial]:.3f}, trial {num_trial}, atom {atom}')
             plt.savefig(f"{self.folder_name_acqf}/zfix_slice_acqf_{num_trial}.png", dpi=300)
             plt.show()
             
             num_trial += 1
+        
         #for q in self.BO_models: # Attemps of data for contour plot of the acquisition function but very expensive (more than 1min per trial)
         #    #x plot
         #    self.acqf_eval_xy = []
@@ -173,15 +148,29 @@ class plotter:
         #print(len(self.acqf_eval_xy))
         #print(self.slice_y[4][1])
 
-    def contour_plot(self, density = 30, num_trial = 0):
+    def contour_plot(self, density = 30, num_trial = 0): # Should always be run after slice_plot !!!! (for now)
         #create a folder to save the plots
         self.folder_name_contour = f"{self.folder_name}/contour_images"
         if not os.path.exists(self.folder_name_contour):
             os.makedirs(self.folder_name_contour)
+        
         #plot the contour plots
         self.model = self.ax_client.generation_strategy.model
         self.trials_plot = self.ax_client.get_trials_data_frame()
-        contour_xy = _get_contour_predictions(model = self.model, metric = "adsorption_energy", x_param_name = "x", y_param_name = "y", density = density, generator_runs_dict = None, slice_values = self.slice_values)
+        
+        atom = self.input['plotted_atom']
+        #atom data selection
+        if atom == 0:
+            x_str = 'x'
+            y_str = 'y'
+            z_str = 'z'
+        elif atom != 0:
+            x_str = f'x{atom+1}'
+            y_str = f'y{atom+1}'
+            z_str = f'z{atom+1}'
+        
+        contour_xy = _get_contour_predictions(model = self.model, metric = "adsorption_energy", x_param_name = x_str, y_param_name = y_str, density = density, generator_runs_dict = None, slice_values = self.slice_values)
+
         xy_x = list(contour_xy[3])
         xy_y = list(contour_xy[4])
 
@@ -190,16 +179,17 @@ class plotter:
         xy_se = np.array(contour_xy[2])
         xy_se = xy_se.reshape(len(xy_x),len(xy_y))
 
+
         plt.contourf(xy_x, xy_y, xy_e, 100)
         plt.colorbar(label = 'Energy Surface')
-        plt.scatter(self.slice_values['x'], self.slice_values['y'], color = "red", label = f"BO optimum, z = {self.slice_values['z']:.3f}", marker="D")
-        plt.scatter(self.trials_plot['x'], self.trials_plot['y'], color = "black", label = "Trials", marker="x")
-        plt.scatter(self.paratrialplot['x'], self.paratrialplot['y'], color = "green", label = f"Next trial, z = {self.paratrialplot['z']:.3f}", marker="D",linewidths=2)
-        plt.axhline(self.paratrialplot['y'], color = "red", linestyle = "--", alpha = 0.4, label = "x-Acquisition function plot")
-        plt.axvline(self.paratrialplot['x'], color = "red", linestyle = "--", alpha = 0.4, label = "y-Acquisition function plot")
-        plt.xlabel('x [A]')
-        plt.ylabel('y [A]')
-        plt.title('BO predicted x-y Energy surface')
+        plt.scatter(self.slice_values[x_str], self.slice_values[y_str], color = "red", label = f"BO optimum, z = {self.slice_values[z_str]:.3f}", marker="D")
+        plt.scatter(self.trials_plot[x_str], self.trials_plot[y_str], color = "black", label = "Trials", marker="x")
+        plt.scatter(self.paratrialplot[x_str], self.paratrialplot[y_str], color = "green", label = f"Next trial, z = {self.paratrialplot[z_str]:.3f}", marker="D",linewidths=2)
+        plt.axhline(self.paratrialplot[y_str], color = "red", linestyle = "--", alpha = 0.4, label = "x-Acquisition function plot")
+        plt.axvline(self.paratrialplot[x_str], color = "red", linestyle = "--", alpha = 0.4, label = "y-Acquisition function plot")
+        plt.xlabel(f'x{atom} [A]')
+        plt.ylabel(f'y{atom} [A]')
+        plt.title(f'BO predicted x{atom}-y{atom} Energy surface, trial {num_trial}')
         #plt.gca().set_aspect('equal', adjustable='box')
         plt.legend()
         plt.savefig(f"{self.folder_name_contour}/xy_BO_contour_{num_trial}.png", dpi=300)
@@ -208,12 +198,12 @@ class plotter:
         plt.figure()
         plt.contourf(xy_x, xy_y, xy_se, 100, cmap='plasma')    
         plt.colorbar(label = 'Standard Error')
-        plt.scatter(self.slice_values['x'], self.slice_values['y'], color = "red", label = f"BO optimum, z = {self.slice_values['z']:.3f}", marker="D")
-        plt.scatter(self.trials_plot['x'], self.trials_plot['y'], color = "black", label = "Trials", marker="x")
-        plt.scatter(self.paratrialplot['x'], self.paratrialplot['y'], color = "green", label = f"Next trial, z = {self.paratrialplot['z']:.3f}", marker="D")
-        plt.xlabel('x [A]')
-        plt.ylabel('y [A]')
-        plt.title('BO predicted x-y Standard Error surface')
+        plt.scatter(self.slice_values[x_str], self.slice_values[y_str], color = "red", label = f"BO optimum, z = {self.slice_values[z_str]:.3f}", marker="D")
+        plt.scatter(self.trials_plot[x_str], self.trials_plot[y_str], color = "black", label = "Trials", marker="x")
+        plt.scatter(self.paratrialplot[x_str], self.paratrialplot[y_str], color = "green", label = f"Next trial, z = {self.paratrialplot[z_str]:.3f}", marker="D")
+        plt.xlabel(f'x{atom} [A]')
+        plt.ylabel(f'y{atom} [A]')
+        plt.title(f'BO predicted x{atom}-y{atom} Standard Error surface, trial {num_trial}')
         #plt.gca().set_aspect('equal', adjustable='box')
         plt.legend()
         plt.savefig(f"{self.folder_name_contour}/xy_se_BO_contour_{num_trial}.png", dpi=300)
@@ -231,9 +221,9 @@ class plotter:
         #ax.view_init(15, 15)
         #plt.savefig(f"{self.folder_name}/BO_contour_xy_3D_{num_trial}.png", dpi=300)
         #plt.show()
-
-        contour_xz = _get_contour_predictions(model = self.model, metric = "adsorption_energy", x_param_name = "x", y_param_name = "z", density = density, generator_runs_dict = None, slice_values = self.slice_values)
-
+        
+        contour_xz = _get_contour_predictions(model = self.model, metric = "adsorption_energy", x_param_name = x_str, y_param_name = z_str, density = density, generator_runs_dict = None, slice_values = self.slice_values)
+        
         xz_x = list(contour_xz[3])
         xz_z = list(contour_xz[4])
 
@@ -244,14 +234,14 @@ class plotter:
 
         plt.contourf(xz_x, xz_z, xz_e, 100)
         plt.colorbar(label = 'Energy Surface')
-        plt.scatter(self.slice_values['x'], self.slice_values['z'], color = "red", label = f"BO optimum, y = {self.slice_values['y']:.3f}", marker="D")
-        plt.scatter(self.trials_plot['x'], self.trials_plot['z'], color = "black", label = "Trials", marker="x")
-        plt.scatter(self.paratrialplot['x'], self.paratrialplot['z'], color = "green", label = f"Next trial, y = {self.paratrialplot['y']:.3f}", marker="D")
-        plt.axhline(self.paratrialplot['z'], color = "red", linestyle = "--", alpha = 0.4, label = "x-Acquisition function plot")
-        plt.axvline(self.paratrialplot['x'], color = "red", linestyle = "--", alpha = 0.4, label = "z-Acquisition function plot")
-        plt.xlabel('x [A]')
-        plt.ylabel('z [A]')
-        plt.title('BO predicted x-z Energy surface')
+        plt.scatter(self.slice_values[x_str], self.slice_values[z_str], color = "red", label = f"BO optimum, y = {self.slice_values[y_str]:.3f}", marker="D")
+        plt.scatter(self.trials_plot[x_str], self.trials_plot[z_str], color = "black", label = "Trials", marker="x")
+        plt.scatter(self.paratrialplot[x_str], self.paratrialplot[z_str], color = "green", label = f"Next trial, y = {self.paratrialplot[y_str]:.3f}", marker="D")
+        plt.axhline(self.paratrialplot[z_str], color = "red", linestyle = "--", alpha = 0.4, label = "x-Acquisition function plot")
+        plt.axvline(self.paratrialplot[x_str], color = "red", linestyle = "--", alpha = 0.4, label = "z-Acquisition function plot")
+        plt.xlabel(f'x{atom} [A]')
+        plt.ylabel(f'z{atom} [A]')
+        plt.title(f'BO predicted x{atom}-z{atom} Energy surface, trial {num_trial}')
         #plt.gca().set_aspect('equal', adjustable='box')
         plt.legend()
         plt.savefig(f"{self.folder_name_contour}/xz_BO_contour_{num_trial}.png", dpi=300)
@@ -260,19 +250,19 @@ class plotter:
         plt.figure()
         plt.contourf(xz_x, xz_z, xz_se, 100, cmap='plasma')
         plt.colorbar(label = 'Standard Error')
-        plt.scatter(self.slice_values['x'], self.slice_values['z'], color = "red", label = f"BO optimum, y = {self.slice_values['y']:.3f}", marker="D")
-        plt.scatter(self.trials_plot['x'], self.trials_plot['z'], color = "black", label = "Trials", marker="x")
-        plt.scatter(self.paratrialplot['x'], self.paratrialplot['z'], color = "green", label = f"Next trial, y = {self.paratrialplot['y']:.3f}", marker="D")
-        plt.xlabel('x [A]')
-        plt.ylabel('z [A]')
-        plt.title('BO predicted x-z Standard Error surface')
+        plt.scatter(self.slice_values[x_str], self.slice_values[z_str], color = "red", label = f"BO optimum, y = {self.slice_values[y_str]:.3f}", marker="D")
+        plt.scatter(self.trials_plot[x_str], self.trials_plot[z_str], color = "black", label = "Trials", marker="x")
+        plt.scatter(self.paratrialplot[x_str], self.paratrialplot[z_str], color = "green", label = f"Next trial, y = {self.paratrialplot[y_str]:.3f}", marker="D")
+        plt.xlabel(f'x{atom} [A]')
+        plt.ylabel(f'z{atom} [A]')
+        plt.title(f'BO predicted x{atom}-z{atom} Standard Error surface, trial {num_trial}')
         #plt.gca().set_aspect('equal', adjustable='box')
         plt.legend()
         plt.savefig(f"{self.folder_name_contour}/xz_se_BO_contour_{num_trial}.png", dpi=300)
         plt.show()
 
-        contour_yz = _get_contour_predictions(model = self.model, metric = "adsorption_energy", x_param_name = "y", y_param_name = "z", density = density, generator_runs_dict = None, slice_values = self.slice_values)
-
+        contour_yz = _get_contour_predictions(model = self.model, metric = "adsorption_energy", x_param_name = y_str, y_param_name = z_str, density = density, generator_runs_dict = None, slice_values = self.slice_values)
+        
         yz_x = list(contour_yz[3])
         yz_z = list(contour_yz[4])
 
@@ -283,14 +273,14 @@ class plotter:
 
         plt.contourf(yz_x, yz_z, yz_e, 100)
         plt.colorbar(label = 'Energy Surface')
-        plt.scatter(self.slice_values['y'], self.slice_values['z'], color = "red", label = f"BO optimum, x = {self.slice_values['x']:.3f}", marker="D")
-        plt.scatter(self.trials_plot['y'], self.trials_plot['z'], color = "black", label = "Trials", marker="x")
-        plt.scatter(self.paratrialplot['y'], self.paratrialplot['z'], color = "green", label = f"Next trial, x = {self.paratrialplot['x']:.3f}", marker="D")
-        plt.axhline(self.paratrialplot['z'], color = "red", linestyle = "--", alpha = 0.4, label = "y-Acquisition function plot")
-        plt.axvline(self.paratrialplot['y'], color = "red", linestyle = "--", alpha = 0.4, label = "z-Acquisition function plot")
-        plt.xlabel('y [A]')
-        plt.ylabel('z [A]')
-        plt.title('BO predicted y-z Energy surface')
+        plt.scatter(self.slice_values[y_str], self.slice_values[z_str], color = "red", label = f"BO optimum, x = {self.slice_values[x_str]:.3f}", marker="D")
+        plt.scatter(self.trials_plot[y_str], self.trials_plot[z_str], color = "black", label = "Trials", marker="x")
+        plt.scatter(self.paratrialplot[y_str], self.paratrialplot[z_str], color = "green", label = f"Next trial, x = {self.paratrialplot[x_str]:.3f}", marker="D")
+        plt.axhline(self.paratrialplot[z_str], color = "red", linestyle = "--", alpha = 0.4, label = "y-Acquisition function plot")
+        plt.axvline(self.paratrialplot[y_str], color = "red", linestyle = "--", alpha = 0.4, label = "z-Acquisition function plot")
+        plt.xlabel(f'y{atom} [A]')
+        plt.ylabel(f'z{atom} [A]')
+        plt.title(f'BO predicted y{atom}-z{atom} Energy surface, trial {num_trial}')
         #plt.gca().set_aspect('equal', adjustable='box')
         plt.legend()
         plt.savefig(f"{self.folder_name_contour}/yz_BO_contour_{num_trial}.png", dpi=300)
@@ -299,21 +289,35 @@ class plotter:
         plt.figure()
         plt.contourf(yz_x, yz_z, yz_se, 100, cmap='plasma')
         plt.colorbar(label = 'Standard Error')
-        plt.scatter(self.slice_values['y'], self.slice_values['z'], color = "red", label = f"BO optimum, x = {self.slice_values['x']:.3f}", marker="D")
-        plt.scatter(self.trials_plot['y'], self.trials_plot['z'], color = "black", label = "Trials", marker="x")
-        plt.scatter(self.paratrialplot['y'], self.paratrialplot['z'], color = "green", label = f"Next trial, x = {self.paratrialplot['x']:.3f}", marker="D")
-        plt.xlabel('y [A]')
-        plt.ylabel('z [A]')
-        plt.title('BO predicted y-z Standard Error surface')
+        plt.scatter(self.slice_values[y_str], self.slice_values[z_str], color = "red", label = f"BO optimum, x = {self.slice_values[x_str]:.3f}", marker="D")
+        plt.scatter(self.trials_plot[y_str], self.trials_plot[z_str], color = "black", label = "Trials", marker="x")
+        plt.scatter(self.paratrialplot[y_str], self.paratrialplot[z_str], color = "green", label = f"Next trial, x = {self.paratrialplot[x_str]:.3f}", marker="D")
+        plt.xlabel(f'y{atom} [A]')
+        plt.ylabel(f'z{atom} [A]')
+        plt.title(f'BO predicted y{atom}-z{atom} Standard Error surface, trial {num_trial}')
         #plt.gca().set_aspect('equal', adjustable='box')
         plt.legend()
         plt.savefig(f"{self.folder_name_contour}/yz_se_BO_contour_{num_trial}.png", dpi=300)
         plt.show()
 
-    def slice_fit (self, fx=None, fy=None, exp = True, plot = False):
+    def slice_fit (self, exp = True, plot = False):
+        #atom data selection
+        atom = self.input['plotted_atom']
+        if atom == 0:
+            x_str = 'x'
+            y_str = 'y'
+            z_str = 'z'
+        elif atom != 0:
+            x_str = f'x{atom+1}'
+            y_str = f'y{atom+1}'
+            z_str = f'z{atom+1}'
+            
         if exp == True:    
             self.slice_plot()
-            fx,fy,fz = self.slice_values['x'], self.slice_values['y'], self.slice_values['z']
+            fx = self.slice_values[x_str]
+            fy = self.slice_values[y_str]
+            fz = self.slice_values[z_str]
+            
         #self.set_cells()
         #self.pre_ads()
         #self.add_adsorbant()
@@ -321,17 +325,18 @@ class plotter:
         
         xmin, xmax = float(0), float(self.cell_x_max/2)
         ymin, ymax = float(0), float(self.cell_y_max/2)
+        zmin, zmax = float(self.bulk_z_max+0.1),float(self.bulk_z_max + self.input['adsorbant_init_h'])
         
         self.x = np.linspace(xmin, xmax, self.density)
         self.y = np.linspace(ymin, ymax, self.density)
-        self.z = np.linspace(self.bulk_z_max+1,self.bulk_z_max + self.input['adsorbant_init_h'],self.density)
+        self.z = np.linspace(zmin, zmax, self.density)
         
         #Fix y, fit x and z
         self.fyy = [fy]
         self.sl_pos_yfix = list(itertools.product(self.x, self.fyy, self.z))
         self.sl_energies_yfix = []
         for position in self.sl_pos_yfix:
-            self.atoms.positions[-1] = position
+            self.atoms.positions[-1-atom] = position
             energy = self.atoms.get_potential_energy()
             self.sl_energies_yfix.append(energy)
         
@@ -344,7 +349,7 @@ class plotter:
         self.sl_pos_xfix = list(itertools.product(self.fxx, self.y, self.z))
         self.sl_energies_xfix = []
         for position in self.sl_pos_xfix:
-            self.atoms.positions[-1] = position
+            self.atoms.positions[-1-atom] = position
             energy = self.atoms.get_potential_energy()
             self.sl_energies_xfix.append(energy)
         
@@ -357,7 +362,7 @@ class plotter:
         self.sl_pos_zfix = list(itertools.product(self.x, self.y, self.fzz))
         self.sl_energies_zfix = []
         for position in self.sl_pos_zfix:
-            self.atoms.positions[-1] = position
+            self.atoms.positions[-1-atom] = position
             energy = self.atoms.get_potential_energy()
             self.sl_energies_zfix.append(energy)
         
@@ -370,10 +375,10 @@ class plotter:
             plt.figure()
             plt.contourf(self.x, self.z, self.sl_E_yfix, 100, label = 'Energy Surface')
             plt.colorbar(label = 'Energy Surface')
-            plt.scatter(self.slice_values['x'], self.slice_values['z'], color = "red", label = "BO optimum", marker="D")
-            plt.xlabel('x [A]')
-            plt.ylabel('z [A]')
-            plt.title('Actual x-z Energy surface')
+            plt.scatter(self.slice_values[x_str], self.slice_values[z_str], color = "red", label = "BO optimum", marker="D")
+            plt.xlabel(f'x{atom} [A]')
+            plt.ylabel(f'z{atom} [A]')
+            plt.title(f'Actual x{atom}-z{atom} Energy surface')
             #plt.gca().set_aspect('equal', adjustable='box')
             plt.legend()
             plt.savefig(f"{self.folder_name}/contour_actfit_yfix.png", dpi=300)
@@ -383,10 +388,10 @@ class plotter:
             plt.figure()
             plt.contourf(self.y, self.z, self.sl_E_xfix, 100, label = 'Energy Surface')
             plt.colorbar(label = 'Energy Surface')
-            plt.scatter(self.slice_values['y'], self.slice_values['z'], color = "red", label = "BO optimum", marker="D")
-            plt.xlabel('y [A]')
-            plt.ylabel('z [A]')
-            plt.title('Actual y-z Energy surface')
+            plt.scatter(self.slice_values[y_str], self.slice_values[z_str], color = "red", label = "BO optimum", marker="D")
+            plt.xlabel(f'y{atom} [A]')
+            plt.ylabel(f'z{atom} [A]')
+            plt.title(f'Actual y{atom}-z{atom} Energy surface')
             #plt.gca().set_aspect('equal', adjustable='box')
             plt.legend()
             plt.savefig(f"{self.folder_name}/contour_actfit_xfix.png", dpi=300)
@@ -396,39 +401,56 @@ class plotter:
             plt.figure()
             plt.contourf(self.x, self.y, self.sl_E_zfix, 100, label = 'Energy Surface')
             plt.colorbar(label = 'Energy Surface')
-            plt.scatter(self.slice_values['x'], self.slice_values['y'], color = "red", label = "BO optimum", marker="D")
-            plt.xlabel('x [A]')
-            plt.ylabel('y [A]')
-            plt.title('Actual x-y Energy surface')
+            plt.scatter(self.slice_values[x_str], self.slice_values[y_str], color = "red", label = "BO optimum", marker="D")
+            plt.xlabel(f'x{atom} [A]')
+            plt.ylabel(f'y{atom} [A]')
+            plt.title(f'Actual x{atom}-y{atom} Energy surface')
             #plt.gca().set_aspect('equal', adjustable='box')
             plt.legend()
             plt.savefig(f"{self.folder_name}/contour_actfit_zfix.png", dpi=300)
             plt.show()
 
     def slice_plot(self):
+        atom = self.input['plotted_atom']
+        if atom == 0:
+            x_str = 'x'
+            y_str = 'y'
+            z_str = 'z'
+        elif atom != 0:
+            x_str = f'x{atom+1}'
+            y_str = f'y{atom+1}'
+            z_str = f'z{atom+1}'
+        
         self.model = self.ax_client.generation_strategy.model
+        
         if self.input['mult_p'] == 'T':
             self.params = self.ax_client.get_pareto_optimal_parameters()[next(iter(self.ax_client.get_pareto_optimal_parameters()))]
-            self.slice_values = {'x': self.params[0]['x'], 'y': self.params[0]['y'], 'z': self.params[0]['z']}
+            self.slice_values = {x_str: self.params[0][x_str], y_str: self.params[0][y_str], z_str: self.params[0][z_str]}
         elif self.input['mult_p'] == 'F':
             self.params = self.ax_client.get_best_parameters()[:1][0]
-            self.slice_values = {'x': self.params['x'], 'y': self.params['y'], 'z': self.params['z']}
+            self.slice_values = {x_str: self.params[x_str], y_str: self.params[y_str], z_str: self.params[z_str]}
+        
         print(type(self.params))
         print(self.params)
         #render(interact_slice(model = self.model, slice_values = self.slice_values))
         
-        self.slice_x = _get_slice_predictions(model = self.model, param_name="x", metric_name="adsorption_energy", slice_values=self.slice_values)
+        self.slice_x = _get_slice_predictions(model = self.model, param_name=x_str, metric_name="adsorption_energy", slice_values=self.slice_values)
         self.slice_plot_en_x = self.slice_x[2]
         self.slice_plot_x = self.slice_x[4]
         self.slice_plot_x_se = self.slice_x[9]
-        self.slice_y = _get_slice_predictions(model = self.model, param_name="y", metric_name="adsorption_energy", slice_values=self.slice_values)
+        
+        
+        self.slice_y = _get_slice_predictions(model = self.model, param_name=y_str, metric_name="adsorption_energy", slice_values=self.slice_values)
         self.slice_plot_en_y = self.slice_y[2]
         self.slice_plot_y = self.slice_y[4]
         self.slice_plot_y_se = self.slice_y[9]
-        self.slice_z = _get_slice_predictions(model = self.model, param_name="z", metric_name="adsorption_energy", slice_values=self.slice_values)
+        
+        
+        self.slice_z = _get_slice_predictions(model = self.model, param_name=z_str, metric_name="adsorption_energy", slice_values=self.slice_values)
         self.slice_plot_en_z = self.slice_z[2]
         self.slice_plot_z = self.slice_z[4]
         self.slice_plot_z_se = self.slice_z[9]
+        
         #Not used yet
         #self.slice_pos_list = list(_get_slice_predictions(model = self.model, param_name="x", metric_name="adsorption_energy", slice_values=self.slice_values)[1].values())
         #self.x_slice = []
@@ -442,7 +464,17 @@ class plotter:
         #    self.eny_slice.append(list(_get_slice_predictions(model = self.model, param_name="y", metric_name="adsorption_energy", slice_values=self.slice_values)[3])[k]['mean'])
 
     def slice_plot_resp_surface(self, fx=None, fy=None, exp = True, density = 30, num_trial = 0, fit = True):
-        #create a folder to save the plots
+        atom = self.input['plotted_atom']
+        if atom == 0:
+            x_str = 'x'
+            y_str = 'y'
+            z_str = 'z'
+        elif atom != 0:
+            x_str = f'x{atom+1}'
+            y_str = f'y{atom+1}'
+            z_str = f'z{atom+1}'
+        
+        #Create a folder to save the plots
         self.folder_name_slice = f"{self.folder_name}/slice_images"
         if not os.path.exists(self.folder_name_slice):
             os.makedirs(self.folder_name_slice)
@@ -463,32 +495,31 @@ class plotter:
         self.jz = float(self.bulk_z_max + self.input['adsorbant_init_h'])
         x_test = np.linspace(0, self.jx, 30)
         y_test = np.linspace(0, self.jy, 30)
-        z_test_test = np.linspace(self.bulk_z_max, self.jz, 30)
+        z_test = np.linspace(self.bulk_z_max, self.jz, 30)
         #positions_test = list(itertools.product(x_test, y_test))
         #Predict energies using old model
         #E_test = loaded_model.predict(positions_test).reshape(len(x_test),len(y_test), order = 'F')
         
         #Predict energies using updated model
-        fz = self.slice_values['z']
+        fz = self.slice_values[z_str]
         self.fzz = [fz]
         
         #x,z fixed
         if self.input['log_data'] == 'T':
             plt.plot(self.slice_plot_y, np.log(self.slice_plot_en_y), color = "red", label = "BO model")
-            plt.scatter(self.trials_plot['y'], np.log(self.trials_plot_en), color = "black", label = "Trials", marker="x")
-            plt.axvline(self.paratrialplot['y'], color = "green", label = "Next trial", linestyle = "--")
+            plt.scatter(self.trials_plot[y_str], np.log(self.trials_plot_en), color = "black", label = "Trials", marker="x")
+            plt.axvline(self.paratrialplot[y_str], color = "green", label = "Next trial", linestyle = "--")
             plt.fill_between(self.slice_plot_y, np.log(self.slice_plot_en_y) - np.log(self.slice_plot_y_se), np.log(self.slice_plot_en_y) + np.log(self.slice_plot_y_se), alpha=0.3)
         else:
             plt.plot(self.slice_plot_y, self.slice_plot_en_y, color = "red", label = "BO model")
-            plt.scatter(self.trials_plot['y'], self.trials_plot_en, color = "black", label = "Trials", marker="x")
-            plt.axvline(self.paratrialplot['y'], color = "green", label = "Next trial", linestyle = "--")
+            plt.scatter(self.trials_plot[y_str], self.trials_plot_en, color = "black", label = "Trials", marker="x")
+            plt.axvline(self.paratrialplot[y_str], color = "green", label = "Next trial", linestyle = "--")
             plt.fill_between(self.slice_plot_y, self.slice_plot_en_y - self.slice_plot_y_se, self.slice_plot_en_y + self.slice_plot_y_se, alpha=0.3)
         plt.ylabel('Energy')
-        plt.xlabel('y [A]')
+        plt.xlabel(f'y{atom} [A]')
         plt.xlim(0, np.max(self.slice_plot_y))
         plt.grid()
-        plt.legend()
-        plt.title(f'BO Predicted Energy Surface, x = {self.slice_values["x"]:.3f}, z = {self.slice_values["z"]:.3f}')
+        plt.title(f'BO Predicted Energy Surface, x{atom} = {self.slice_values[x_str]:.3f}, z{atom} = {self.slice_values[z_str]:.3f}, trial {num_trial}')
         if self.input['log_scale'] == 'T':
                 plt.yscale('log')
         if fit == True:
@@ -496,8 +527,9 @@ class plotter:
             if self.input['log_data'] == 'T':
                 plt.plot(y_test, np.log(self.sl_E_test_xfix), color = "darkblue", label = f"Actual Energy Surface")
             else:
-                plt.plot(y_test, self.sl_E_test_xfix, color = "darkblue", label = "Actual Energy Surface")
-            plt.title(f'BO Predicted vs Actual Energy Surface, x = {self.slice_values["x"]:.3f}, z = {self.slice_values["z"]:.3f}')
+                plt.plot(y_test, self.sl_E_test_xfix, color = "darkblue", label = f"Actual Energy Surface")
+            plt.title(f'BO Predicted vs Actual Energy Surface, x{atom} = {self.slice_values[x_str]:.3f}, z{atom} = {self.slice_values[z_str]:.3f}, trial {num_trial}')
+        plt.legend()
         plt.savefig(f"{self.folder_name_slice}/xfix_slice_predfit_{num_trial}.png", dpi=300)
         if fit == True:
             plt.ylim(np.min(self.sl_E_test_xfix),np.max(self.sl_E_test_xfix))
@@ -507,20 +539,19 @@ class plotter:
         #y,z fixed
         if self.input['log_data'] == 'T':
             plt.plot(self.slice_plot_x, np.log(self.slice_plot_en_x), color = "red", label = "BO model")
-            plt.scatter(self.trials_plot['x'], np.log(self.trials_plot_en), color = "black", label = "Trials", marker="x")
-            plt.axvline(self.paratrialplot['x'], color = "green", label = "Next trial", linestyle = "--")
+            plt.scatter(self.trials_plot[x_str], np.log(self.trials_plot_en), color = "black", label = "Trials", marker="x")
+            plt.axvline(self.paratrialplot[x_str], color = "green", label = "Next trial", linestyle = "--")
             plt.fill_between(self.slice_plot_x, np.log(self.slice_plot_en_x) - np.log(self.slice_plot_x_se), np.log(self.slice_plot_en_x) + np.log(self.slice_plot_x_se), alpha=0.3)
         else:
             plt.plot(self.slice_plot_x, self.slice_plot_en_x, color = "red", label = "BO model")
-            plt.scatter(self.trials_plot['x'], self.trials_plot_en, color = "black", label = "Trials", marker="x")
-            plt.axvline(self.paratrialplot['x'], color = "green", label = "Next trial", linestyle = "--")
+            plt.scatter(self.trials_plot[x_str], self.trials_plot_en, color = "black", label = "Trials", marker="x")
+            plt.axvline(self.paratrialplot[x_str], color = "green", label = "Next trial", linestyle = "--")
             plt.fill_between(self.slice_plot_x, self.slice_plot_en_x - self.slice_plot_x_se, self.slice_plot_en_x + self.slice_plot_x_se, alpha=0.3)
         plt.ylabel('Energy')
-        plt.xlabel('x [A]')
+        plt.xlabel(f'x{atom} [A]')
         plt.xlim(0, np.max(self.slice_plot_x))
         plt.grid()
-        plt.legend()
-        plt.title(f'BO Predicted vs Actual Energy Surface, y = {self.slice_values["y"]:.3f}, z = {self.slice_values["z"]:.3f}')
+        plt.title(f'BO Predicted vs Actual Energy Surface, y{atom} = {self.slice_values[y_str]:.3f}, z{atom} = {self.slice_values[z_str]:.3f}, trial {num_trial}')
         if self.input['log_scale'] == 'T':
                 plt.yscale('log')
         if fit == True:
@@ -529,42 +560,43 @@ class plotter:
                 plt.plot(x_test, np.log(self.sl_E_test_yfix), color = "darkblue", label = "Actual Energy Surface")
             else:
                 plt.plot(x_test, self.sl_E_test_yfix, color = "darkblue", label = "Actual Energy Surface")
-            plt.title(f'BO Predicted vs Actual Energy Surface, y = {self.slice_values["y"]:.3f}, z = {self.slice_values["z"]:.3f}')
+            plt.title(f'BO Predicted vs Actual Energy Surface, y{atom} = {self.slice_values[y_str]:.3f}, z{atom} = {self.slice_values[z_str]:.3f}, trial {num_trial}')
+        plt.legend()
         plt.savefig(f"{self.folder_name_slice}/yfix_slice_predfit_{num_trial}.png", dpi=300)
         if fit == True:
             plt.ylim(np.min(self.sl_E_test_yfix),np.max(self.sl_E_test_yfix))
             plt.savefig(f"{self.folder_name_slice}/yfix_slice_predfit_lim_{num_trial}.png", dpi=300)
-        plt.show()
+        plt.show()  
 
-        #x,y fixed
+        #x,y fixed  
         if self.input['log_data'] == 'T':
             plt.plot(self.slice_plot_z, np.log(self.slice_plot_en_z), color = "red", label = "BO model")
-            plt.scatter(self.trials_plot['z'], np.log(self.trials_plot_en), color = "black", label = "Trials", marker="x")
-            plt.axvline(self.paratrialplot['z'], color = "green", label = "Next trial", linestyle = "--")
+            plt.scatter(self.trials_plot[z_str], np.log(self.trials_plot_en), color = "black", label = "Trials", marker="x")
+            plt.axvline(self.paratrialplot[z_str], color = "green", label = "Next trial", linestyle = "--")
             plt.fill_between(self.slice_plot_z, np.log(self.slice_plot_en_z) - np.log(self.slice_plot_z_se), np.log(self.slice_plot_en_z) + np.log(self.slice_plot_z_se), alpha=0.3)
         else:
             plt.plot(self.slice_plot_z, self.slice_plot_en_z, color = "red", label = "BO model")
-            plt.scatter(self.trials_plot['z'], self.trials_plot_en, color = "black", label = "Trials", marker="x")
-            plt.axvline(self.paratrialplot['z'], color = "green", label = "Next trial", linestyle = "--")
+            plt.scatter(self.trials_plot[z_str], self.trials_plot_en, color = "black", label = "Trials", marker="x")
+            plt.axvline(self.paratrialplot[z_str], color = "green", label = "Next trial", linestyle = "--")
             plt.fill_between(self.slice_plot_z, self.slice_plot_en_z - self.slice_plot_z_se, self.slice_plot_en_z + self.slice_plot_z_se, alpha=0.3)
         plt.ylabel('Energy')
-        plt.xlabel('z [A]')
+        plt.xlabel(f'z{atom} [A]')
         plt.xlim(np.min(self.slice_plot_z),np.max(self.slice_plot_z))
         plt.grid()
-        plt.legend()
-        plt.title(f'BO Predicted vs Actual Energy Surface, x = {self.slice_values["x"]:.3f}, y = {self.slice_values["y"]:.3f}')
+        plt.title(f'BO Predicted vs Actual Energy Surface, x{atom} = {self.slice_values[x_str]:.3f}, y{atom} = {self.slice_values[y_str]:.3f}, trial {num_trial}')
         if self.input['log_scale'] == 'T':
                 plt.yscale('log')
         if fit == True:
-            self.sl_E_test_zfix = self.sl_knn_zfix.predict(list(itertools.product(self.fzz,self.fyy,z_test_test))).reshape(len(x_test),len(self.fyy), order = 'F')
+            self.sl_E_test_yfix = self.sl_knn_yfix.predict(list(itertools.product(self.fxx,self.fyy,z_test))).reshape(len(x_test),len(self.fyy), order = 'F')
             if self.input['log_data'] == 'T':
-                plt.plot(z_test_test, np.log(self.sl_E_test_zfix), color = "darkblue", label = "Actual Energy Surface")
+                plt.plot(z_test, np.log(self.sl_E_test_yfix), color = "darkblue", label = "Actual Energy Surface")
             else:
-                plt.plot(z_test_test, self.sl_E_test_zfix, color = "darkblue", label = "Actual Energy Surface")
-            plt.title(f'BO Predicted vs Actual Energy Surface, x = {self.slice_values["x"]:.3f}, y = {self.slice_values["y"]:.3f}')
+                plt.plot(z_test, self.sl_E_test_yfix, color = "darkblue", label = "Actual Energy Surface")
+            plt.title(f'BO Predicted vs Actual Energy Surface, x{atom} = {self.slice_values[x_str]:.3f}, y{atom} = {self.slice_values[y_str]:.3f}, trial {num_trial}')
+        plt.legend()        
         plt.savefig(f"{self.folder_name_slice}/zfix_slice_predfit_{num_trial}.png", dpi=300)
         if fit == True:
-            plt.ylim(np.min(self.sl_E_test_zfix),np.max(self.sl_E_test_zfix))
+            plt.ylim(np.min(self.sl_E_test_yfix),np.max(self.sl_E_test_yfix))
             plt.savefig(f"{self.folder_name_slice}/zfix_slice_predfit_lim_{num_trial}.png", dpi=300)
         plt.show()
 
@@ -796,7 +828,7 @@ class plotter:
         ax[0].axvline(x=self.input['gs_init_steps'], color='k', linestyle='--', linewidth=2, alpha=0.5, label='End of initialization trials')
         
         #bfgs
-        x_bfgs = range(len(self.df_bfgs))
+        x_bfgs = range(1,len(self.df_bfgs)+1)
         y_bfgs = self.df_bfgs['Energy']
         if self.input['log_data'] == 'T':
             ax[0].plot(x_bfgs, np.log(y_bfgs), label=f"{self.input['calc_method']}_BFGS", color='r', marker='o', linestyle='-')
@@ -805,7 +837,7 @@ class plotter:
         
         #BO
         trace = self.df['bo_trace']
-        x = range(len(trace))
+        x = range(1,len(trace)+1)
         if self.input['log_data'] == 'T':
             ax[0].plot(x, np.log(trace), label=f"{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}", color='b', marker='o', linestyle='-')
         else:
@@ -817,12 +849,14 @@ class plotter:
         ax[1].spines['top'].set_visible(False)
         ax[1].spines['right'].set_visible(False)
         ax[1].grid(True, linestyle='--', color='0.7', zorder=-1, linewidth=1, alpha=0.5)
+        
         #BFGS
         xt_bfgs = self.df_bfgs['Time']
         if self.input['log_data'] == 'T':
             ax[1].plot(xt_bfgs, np.log(y_bfgs), label=f"{self.input['calc_method']}_BFGS", color='r', marker='o', linestyle='-')
         else:
             ax[1].plot(xt_bfgs, y_bfgs, label=f"{self.input['calc_method']}_BFGS", color='r', marker='o', linestyle='-')
+            
         #BO
         xt_BO = self.df['run_time']
         ax[1].axvline(x=self.df['run_time'][self.input['gs_init_steps']-1], color='k', linestyle='--', linewidth=2, alpha=0.5, label='End of initialization trials')
@@ -830,83 +864,148 @@ class plotter:
             ax[1].plot(xt_BO, np.log(trace), label=f"{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}", color='b', marker='o', linestyle='-')
         else:
             ax[1].plot(xt_BO, trace, label=f"{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}", color='b', marker='o', linestyle='-')
+        
+        
         plt.legend()
         ax[0].legend()
         if self.input['log_scale'] == 'T':
                 ax[0].set_yscale('log')
                 ax[1].set_yscale('log')
         if self.input["save_fig"] == "T":
-            fig.savefig(f"{self.folder_name}/ase_ads_Opt_trace_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_{self.curr_date_time}.png")        
+            fig.savefig(f"{self.folder_name}/ase_ads_Opt_trace_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_{self.curr_date_time}.png")    
+        ax[0].set_ylim(10.5,12.5)    
+        ax[1].set_ylim(10.5,12.5)
+        if self.input["save_fig"] == "T":
+            fig.savefig(f"{self.folder_name}/ase_ads_Opt_trace_zoom_{self.input['adsorbant_atom']}_on_{self.input['surface_atom']}_{self.input['calc_method']}_{self.input['bo_surrogate']}_{self.input['bo_acquisition_f']}_{self.curr_date_time}.png")    
 
     def acqf_contour_slice_gif(self):
-        self.acqf_images_x = []
-        for filename in os.listdir(f"{self.folder_name}/acqf_images"):
-            if filename.startswith('xfix'):
-                self.acqf_images_x.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
-        imageio.mimsave(f"{self.folder_name}/acqf_x.gif", self.acqf_images_x, fps=0.7)
+        def num_sort(string):
+            return list(map(int, re.findall(r'\d+', string)))[0]
         
-        self.acqf_images_y = []
-        for filename in os.listdir(f"{self.folder_name}/acqf_images"):
-            if filename.startswith('yfix'):
-                self.acqf_images_y.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
-        imageio.mimsave(f"{self.folder_name}/acqf_y.gif", self.acqf_images_y, fps=0.7)
+        if self.input['number_of_ads'] == 1:
+            self.acqf_files = sorted(os.listdir(f"{self.folder_name}/acqf_images"), key=num_sort)
+            self.acqf_images_x = []
+            for filename in self.acqf_files:
+                if filename.startswith('xfix'):
+                    self.acqf_images_x.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
+            imageio.mimsave(f"{self.folder_name}/acqf_x.gif", self.acqf_images_x, fps=0.7)
+            
+            self.acqf_images_y = []
+            for filename in self.acqf_files:
+                if filename.startswith('yfix'):
+                    self.acqf_images_y.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
+            imageio.mimsave(f"{self.folder_name}/acqf_y.gif", self.acqf_images_y, fps=0.7)
+            
+            self.acqf_images_z = []
+            for filename in self.acqf_files:
+                if filename.startswith('zfix'):
+                    self.acqf_images_z.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
+            imageio.mimsave(f"{self.folder_name}/acqf_z.gif", self.acqf_images_z, fps=0.7)
         
-        self.acqf_images_z = []
-        for filename in os.listdir(f"{self.folder_name}/acqf_images"):
-            if filename.startswith('zfix'):
-                self.acqf_images_z.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
-        imageio.mimsave(f"{self.folder_name}/acqf_z.gif", self.acqf_images_z, fps=0.7)
-        
+        self.en_contour_xy_files = sorted(os.listdir(f"{self.folder_name}/contour_images"), key=num_sort)
         self.en_contour_xy_images = []
-        for filename in os.listdir(f"{self.folder_name}/contour_images"):
+        for filename in self.en_contour_xy_files:
             if filename.startswith('xy_B'):
                 self.en_contour_xy_images.append(imageio.imread(f"{self.folder_name}/contour_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/contourBO_xy.gif", self.en_contour_xy_images, fps=0.7)
         
         self.en_contour_xy_se_images = []
-        for filename in os.listdir(f"{self.folder_name}/contour_images"):
+        for filename in self.en_contour_xy_files:
             if filename.startswith('xy_se'):
                 self.en_contour_xy_se_images.append(imageio.imread(f"{self.folder_name}/contour_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/contourBO_xy_se.gif", self.en_contour_xy_se_images, fps=0.7)
         
         self.en_contour_xz_images = []
-        for filename in os.listdir(f"{self.folder_name}/contour_images"):
+        for filename in self.en_contour_xy_files:
             if filename.startswith('xz_B'):
                 self.en_contour_xz_images.append(imageio.imread(f"{self.folder_name}/contour_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/contourBO_xz.gif", self.en_contour_xz_images, fps=0.7)
         
         self.en_contour_xz_se_images = []
-        for filename in os.listdir(f"{self.folder_name}/contour_images"):
+        for filename in self.en_contour_xy_files:
             if filename.startswith('xz_se'):
                 self.en_contour_xz_se_images.append(imageio.imread(f"{self.folder_name}/contour_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/contourBO_xz_se.gif", self.en_contour_xz_se_images, fps=0.7)
         
         self.en_contour_yz_images = []
-        for filename in os.listdir(f"{self.folder_name}/contour_images"):
+        for filename in self.en_contour_xy_files:
             if filename.startswith('yz_B'):
                 self.en_contour_yz_images.append(imageio.imread(f"{self.folder_name}/contour_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/contourBO_yz.gif", self.en_contour_yz_images, fps=0.7)
         
         self.en_contour_yz_se_images = []
-        for filename in os.listdir(f"{self.folder_name}/contour_images"):
+        for filename in self.en_contour_xy_files:
             if filename.startswith('yz_se'):
                 self.en_contour_yz_se_images.append(imageio.imread(f"{self.folder_name}/contour_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/contourBO_yz_se.gif", self.en_contour_yz_se_images, fps=0.7)
         
+        self.slice_files = sorted(os.listdir(f"{self.folder_name}/slice_images"), key=num_sort)
         self.slice_images_x = []
-        for filename in os.listdir(f"{self.folder_name}/slice_images"):
+        for filename in self.slice_files:
             if filename.startswith('xfix'):
                 self.slice_images_x.append(imageio.imread(f"{self.folder_name}/slice_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/slice_x.gif", self.slice_images_x, fps=0.7)
         
         self.slice_images_y = []
-        for filename in os.listdir(f"{self.folder_name}/slice_images"):
+        for filename in self.slice_files:
             if filename.startswith('yfix'):
                 self.slice_images_y.append(imageio.imread(f"{self.folder_name}/slice_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/slice_y.gif", self.slice_images_y, fps=0.7)
         
         self.slice_images_z = []
-        for filename in os.listdir(f"{self.folder_name}/slice_images"):
+        for filename in self.slice_files:
             if filename.startswith('zfix'):
                 self.slice_images_z.append(imageio.imread(f"{self.folder_name}/slice_images/{filename}"))
         imageio.mimsave(f"{self.folder_name}/slice_z.gif", self.slice_images_z, fps=0.7)
+
+    @staticmethod
+    def response_surface_init(self): #Response surface from scratch, probably not needed ? 
+        self.set_cells()
+        self.pre_ads()
+        self.add_adsorbant()
+        self.atoms.calc = EMT()
+        self.filtered_atoms_1 = self.atoms[self.atoms.get_tags() == 1]
+        self.filtered_atoms_2 = self.atoms[self.atoms.get_tags() == 2]
+        self.filtered_atoms_3 = self.atoms[self.atoms.get_tags() == 3]
+        
+        xmin, xmax = float(np.min(self.atoms.positions[:, 0])), float(np.max(self.atoms.positions[:, 0]))
+        ymin, ymax = float(np.min(self.atoms.positions[:, 1])), float(np.max(self.atoms.positions[:, 1]))
+        
+        self.x = np.linspace(xmin, xmax, 100)
+        self.y = np.linspace(ymin, ymax, 100)
+        self.z = [14.65557600]
+        #Make a list of positions x,y,z
+        positions = list(itertools.product(self.x, self.y, self.z))
+        #Calculate the energy of each position
+        self.energies = []
+        for position in positions:
+            self.atoms.positions[-1] = position
+            energy = self.atoms.get_potential_energy()
+            self.energies.append(energy)
+        #save self.energies to a csv file
+        np.savetxt('response_surface2.csv', self.energies, delimiter=',')
+        np.savetxt('surface_positions2.csv', positions, delimiter=',')
+        np.savetxt('x_response_surface2.csv', self.x, delimiter=',')
+        np.savetxt('y_response_surface2.csv', self.y, delimiter=',')
+
+    @staticmethod
+    def Response_surface(self):
+        self.response_surface_init()
+        #Reshape E and check
+        E = np.array(self.energies).reshape(len(self.x),len(self.y), order = 'F') #Issue was the reshaping was accounting the wrong order 
+        # Save the E array to a csv file
+        #was using a C-like index order, but the correct one is Fortran-like index order
+        # 2D plot
+        plt.figure()
+        plt.contourf(self.x, self.y, E, levels=100, label = 'Energy')
+        plt.colorbar()
+        plt.xlabel('x')
+        plt.ylabel('y')
+        # Make it so x and y are on the same scale
+        plt.gca().set_aspect('equal', adjustable='box')
+        # Plot the filtered atom positions
+        plt.scatter(self.filtered_atoms_1.positions[:, 0], self.filtered_atoms_1.positions[:, 1], c='red', label = 'Layer 1')
+        plt.scatter(self.filtered_atoms_2.positions[:, 0], self.filtered_atoms_2.positions[:, 1], c='blue', label = 'Layer 2')
+        plt.scatter(self.filtered_atoms_3.positions[:, 0], self.filtered_atoms_3.positions[:, 1], c='green', label = 'Layer 3')
+        plt.legend()
+        plt.show()
