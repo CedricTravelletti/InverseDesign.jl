@@ -3,9 +3,7 @@ from ase.build import bulk
 import torch
 import itertools
 import gpytorch
-from matplotlib import pyplot as plt
 from botorch.acquisition.objective import ScalarizedPosteriorTransform
-from botorch.models.gpytorch import GPyTorchModel
 from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.models.model import FantasizeMixin
 from botorch.models.gpytorch import GPyTorchModel
@@ -67,7 +65,6 @@ from botorch.acquisition import qMaxValueEntropy,qKnowledgeGradient, qNoisyExpec
 from botorch.acquisition.analytic import UpperConfidenceBound,ExpectedImprovement
 # Ax wrappers for BoTorch components
 from ax.models.torch.botorch_modular.surrogate import Surrogate
-from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 
 # ## Create client and initial sampling strategy to warm-up the GP model
 from ax.modelbridge.generation_strategy import GenerationStep, GenerationStrategy
