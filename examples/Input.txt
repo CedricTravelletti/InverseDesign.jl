@@ -3,7 +3,7 @@ surface_atom : Cu
 lattice : fcc
 # bridge, fcc, ontop, random
 ads_init_pos : random
-number_of_ads : 3
+number_of_ads : 1
 number_of_layers : 5
 supercell_x_rep : 4
 supercell_y_rep : 4

@@ -5,7 +5,7 @@ import itertools
 import gpytorch
 from matplotlib import pyplot as plt
 from botorch.acquisition.objective import ScalarizedPosteriorTransform
-from botorch.models.gpytorch import GPyTorchModel
+from botorch.models.gpytorch import MultiTaskGPyTorchModel
 from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.models.model import FantasizeMixin
 from botorch.models.gpytorch import GPyTorchModel
@@ -19,8 +19,15 @@ from gpytorch.means.mean import Mean
 from gpytorch.mlls.sum_marginal_log_likelihood import ExactMarginalLogLikelihood
 import copy
 
+from typing import List
+from typing import Any, Dict
+
+from botorch.acquisition.input_constructors import acqf_input_constructor
+from botorch.acquisition.objective import ScalarizedPosteriorTransform
+from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
+
 ## Define the dGP to include forces
-class GPWithDerivatives(GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
+class GPWithDerivatives(BatchedMultiOutputGPyTorchModel,GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
     def __init__(
         self,
         train_X: Tensor,
@@ -35,16 +42,18 @@ class GPWithDerivatives(GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
         
         # Dimension of model
         dim = train_X.shape[-1]
-        self.train_X = train_X 
+        self.dim = dim
+        self.train_X = train_X
+        self._validate_tensor_args(X=train_X, Y=train_Y, Yvar=train_Yvar)
         # Multi-dimensional likelihood since we're modeling a function and its gradient
         likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=1+dim)
         super().__init__(train_X, train_Y, likelihood)
         # Gradient-enabled mean
-        self.mean_module = gpytorch.means.ConstantMeanGrad() 
+        self.mean_module = gpytorch.means.ConstantMeanGrad()
         # Gradient-enabled kernel
         self.base_kernel = gpytorch.kernels.RBFKernelGrad( 
-            ard_num_dims=dim, # Separate lengthscale for each input dimension
-            )
+            ard_num_dims=dim,) # Separate lengthscale for each input dimension
+        
         # Adds lengthscale to the kernel
         self.covar_module = gpytorch.kernels.ScaleKernel(self.base_kernel)
         # Output dimension is 1 (function value) + dim (number of partial derivatives)
@@ -52,7 +61,20 @@ class GPWithDerivatives(GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
         # Used to extract function value and not gradients during optimization
         self.scale_tensor = torch.tensor([1.0] + [0.0]*dim, dtype=torch.double)
         
+        train_X, train_Y, train_Yvar = self._transform_tensor_args(
+            X=train_X, Y=train_Y, Yvar=train_Yvar
+        )
+        self._input_batch_shape = train_X.shape[:-2]
+        
+        #self.mean_module = mean_module
+        #self.covar_module = covar_module
+        #self.to(train_X)
+        
     def forward(self, x):
+        print(self.dim)
+        print(self.train_X.shape)
+        #if self.training:
+        #    x = self.transform_inputs(x)
         mean_x = self.mean_module(x).to(device)
         covar_x = self.covar_module(x).to(device)
         print(mean_x.shape)
@@ -62,7 +84,7 @@ class GPWithDerivatives(GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
 # ## Set up evaluation function (pipe to ASE) for trial parameters suggested by Ax. 
 # Note that this function can return additional keys that can be used in the `outcome_constraints` of the experiment.
 
-from botorch.models import SingleTaskGP, ModelListGP, FixedNoiseGP,MultiTaskGP
+from botorch.models import SingleTaskGP, ModelListGP, FixedNoiseGP,MultiTaskGP,HeteroskedasticSingleTaskGP
 from botorch.acquisition import qMaxValueEntropy,qKnowledgeGradient, qNoisyExpectedImprovement
 from botorch.acquisition.analytic import UpperConfidenceBound,ExpectedImprovement
 # Ax wrappers for BoTorch components
@@ -97,8 +119,10 @@ def str_to_class(classname):
     return getattr(sys.modules[__name__], classname)
 
 # Check if CUDA is available and set PyTorch device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#device = torch.device("cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
+
+
 
 class BOExperiment(plotter, experiment_setup):
     number_of_exp = 0
@@ -510,19 +534,18 @@ class BOExperiment(plotter, experiment_setup):
                         "torch_device": device,
                         "surrogate": Surrogate(
                                                 # BoTorch `Model` type
-                                                botorch_model_class=str_to_class(self.input['bo_surrogate']),
+                                                botorch_model_class=GPWithDerivatives,
                                                 # Optional, MLL class with which to optimize model parameters
-                                                mll_class=ExactMarginalLogLikelihood,
+                                                #mll_class=ExactMarginalLogLikelihood,
                                                 # Optional, dictionary of keyword arguments to underlying
                                                 # BoTorch `Model` constructor
                                                 model_options={"torch_device": device},
                                                 ),
-                        #"botorch_acqf_class": str_to_class(self.input['bo_acquisition_f']),
                         "botorch_acqf_class": str_to_class(self.input['bo_acquisition_f']),
-                        #"acquisition_options": {"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
+                        "acquisition_options": {"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
                         #"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*input["number_of_ads"]*3, dtype=torch.double)),
                                 },  # Any kwargs you want passed into the model
-                    model_gen_kwargs={"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
+                    #model_gen_kwargs={"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
                     # Parallelism limit for this step, often lower than for Sobol
                     # More on parallelism vs. required samples in BayesOpt:
                     # https://ax.dev/docs/bayesopt.html#tradeoff-between-parallelism-and-total-number-of-trials
