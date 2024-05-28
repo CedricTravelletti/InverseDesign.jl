@@ -48,7 +48,6 @@ save_object("./data/gammaP_bandgap_diamond_grid.jld2", gammaP_bandgap_diamond_gr
 # Bandgap around perturbed equilibrium.
 Random.seed!(1) # Setting the seed
 x0_diamond_pert = x0_diamond + rand(Normal(0., 0.01), size(x0_diamond)) 
-end
 
 gammaP_bandgap_diamond_grid_pert = Vector{Float64}()
 x0_grid_diamond_pert = [x0_diamond_pert .+ [offset; zeros(length(x0_diamond_pert) - 1)] for offset in x_offsets]
