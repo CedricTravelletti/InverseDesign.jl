@@ -31,6 +31,7 @@ function construct_diamond()
 end
 
 function construct_gammaP_bandgap_vs_strain12()
+    setup_threading()
     system = construct_silicon()
 
     model_kwargs = (; functionals = [:lda_x, :lda_c_pw], temperature = 1e-4)
