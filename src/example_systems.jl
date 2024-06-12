@@ -2,6 +2,7 @@
 # Collection of example systems used for inverse design research.
 # 
 using DFTK
+setup_threading()
 using Unitful
 using UnitfulAtomic
 using ForwardDiff

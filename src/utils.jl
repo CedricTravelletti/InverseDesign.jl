@@ -30,8 +30,11 @@ end
 with `save_bands_plotting`.
 
 """
-function save_bands_plotting(base_path::String, scfres; kline_density=20)
-    bands = compute_bands(scfres, irrfbz_path(scfres.basis.model); kline_density)
+function save_bands_plotting(base_path::String, scfres; kpath=nothing, kline_density=20)
+    if kpath is nothing
+	    kpath = irrfbz_path(scfres.basis.model)
+    end
+    bands = compute_bands(scfres, kpath; kline_density)
 
     save_bands(base_path * "_bands.jld2", bands)
     save_scfres(base_path * "_scfres.jld2", scfres;
