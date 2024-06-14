@@ -138,7 +138,9 @@ Arguments:
 
 """
 function gamma_point_bandgap(calculator::DFTKCalculator, system::AbstractSystem, positions_flat)
+    DFTK.reset_timer!(DFTK.timer)
     scfres_dual = compute_scf_dual(calculator, system, positions_flat)
     vi = valence_band_index(scfres_dual)
-    scfres_dual.eigenvalues[1][vi + 1] - scfres_dual.eigenvalues[1][vi]
+    print(DFTK.timer)
+    (; bandgap=scfres_dual.eigenvalues[1][vi + 1] - scfres_dual.eigenvalues[1][vi], timer=DFTK.timer)
 end

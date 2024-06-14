@@ -49,7 +49,7 @@ function construct_gammaP_bandgap_vs_strain12()
     function _f_strain12(strain12)
     	strain = [strain12; [0., 0, 0, 0]]
     	positions_flat = ComponentVector(; atoms=x0, strain)
-    	gamma_point_bandgap(calculator, system, positions_flat)
+	gamma_point_bandgap(calculator, system, positions_flat)[:bandgap]
     end
     
     function gammaP_bandgap_vs_strain12(strain12)
