@@ -47,6 +47,7 @@ class plotter:
         #plot the acquisition function
         num_trial = 6
         atom = self.input['plotted_atom']
+        bounds = torch.tensor([[0, self.jx], [0, self.jy], [self.bulk_z_max, self.jz]])
         for q in self.BO_models:
             if atom == 0:
                 #x plot
@@ -532,7 +533,7 @@ class plotter:
         plt.legend()
         plt.savefig(f"{self.folder_name_slice}/xfix_slice_predfit_{num_trial}.png", dpi=300)
         if fit == True:
-            plt.ylim(np.min(self.sl_E_test_xfix),np.max(self.sl_E_test_xfix))
+            plt.ylim(np.min([np.min(self.sl_E_test_xfix), np.min(self.slice_plot_en_y)]),np.max(self.sl_E_test_xfix))
             plt.savefig(f"{self.folder_name_slice}/xfix_slice_predfit_lim_{num_trial}.png", dpi=300)
         plt.show()
 
@@ -564,7 +565,7 @@ class plotter:
         plt.legend()
         plt.savefig(f"{self.folder_name_slice}/yfix_slice_predfit_{num_trial}.png", dpi=300)
         if fit == True:
-            plt.ylim(np.min(self.sl_E_test_yfix),np.max(self.sl_E_test_yfix))
+            plt.ylim(np.min([np.min(self.sl_E_test_yfix), np.min(self.slice_plot_en_x)]),np.max(self.sl_E_test_yfix))
             plt.savefig(f"{self.folder_name_slice}/yfix_slice_predfit_lim_{num_trial}.png", dpi=300)
         plt.show()  
 
@@ -596,7 +597,7 @@ class plotter:
         plt.legend()        
         plt.savefig(f"{self.folder_name_slice}/zfix_slice_predfit_{num_trial}.png", dpi=300)
         if fit == True:
-            plt.ylim(np.min(self.sl_E_test_yfix),np.max(self.sl_E_test_yfix))
+            plt.ylim(np.min([np.min(self.sl_E_test_yfix), np.min(self.slice_plot_en_z)]),np.max(self.sl_E_test_yfix))
             plt.savefig(f"{self.folder_name_slice}/zfix_slice_predfit_lim_{num_trial}.png", dpi=300)
         plt.show()
 
@@ -882,25 +883,25 @@ class plotter:
         def num_sort(string):
             return list(map(int, re.findall(r'\d+', string)))[0]
         
-        if self.input['number_of_ads'] == 1:
-            self.acqf_files = sorted(os.listdir(f"{self.folder_name}/acqf_images"), key=num_sort)
-            self.acqf_images_x = []
-            for filename in self.acqf_files:
-                if filename.startswith('xfix'):
-                    self.acqf_images_x.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
-            imageio.mimsave(f"{self.folder_name}/acqf_x.gif", self.acqf_images_x, fps=0.7)
-            
-            self.acqf_images_y = []
-            for filename in self.acqf_files:
-                if filename.startswith('yfix'):
-                    self.acqf_images_y.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
-            imageio.mimsave(f"{self.folder_name}/acqf_y.gif", self.acqf_images_y, fps=0.7)
-            
-            self.acqf_images_z = []
-            for filename in self.acqf_files:
-                if filename.startswith('zfix'):
-                    self.acqf_images_z.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
-            imageio.mimsave(f"{self.folder_name}/acqf_z.gif", self.acqf_images_z, fps=0.7)
+        #if self.input['number_of_ads'] == 1:
+        #    self.acqf_files = sorted(os.listdir(f"{self.folder_name}/acqf_images"), key=num_sort)
+        #    self.acqf_images_x = []
+        #    for filename in self.acqf_files:
+        #        if filename.startswith('xfix'):
+        #            self.acqf_images_x.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
+        #    imageio.mimsave(f"{self.folder_name}/acqf_x.gif", self.acqf_images_x, fps=0.7)
+        #    
+        #    self.acqf_images_y = []
+        #    for filename in self.acqf_files:
+        #        if filename.startswith('yfix'):
+        #            self.acqf_images_y.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
+        #    imageio.mimsave(f"{self.folder_name}/acqf_y.gif", self.acqf_images_y, fps=0.7)
+        #    
+        #    self.acqf_images_z = []
+        #    for filename in self.acqf_files:
+        #        if filename.startswith('zfix'):
+        #            self.acqf_images_z.append(imageio.imread(f"{self.folder_name}/acqf_images/{filename}"))
+        #    imageio.mimsave(f"{self.folder_name}/acqf_z.gif", self.acqf_images_z, fps=0.7)
         
         self.en_contour_xy_files = sorted(os.listdir(f"{self.folder_name}/contour_images"), key=num_sort)
         self.en_contour_xy_images = []

@@ -24,61 +24,83 @@ from typing import Any, Dict
 from botorch.acquisition.input_constructors import acqf_input_constructor
 from botorch.acquisition.objective import ScalarizedPosteriorTransform
 from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
+from botorch.posteriors.gpytorch import GPyTorchPosterior
+from gpytorch import settings as gpt_settings
+from typing import Any, Union
+from gpytorch.models import ExactGP
+from botorch.utils.containers import BotorchContainer
 
 ## Define the dGP to include forces
-class GPWithDerivatives(BatchedMultiOutputGPyTorchModel,GPyTorchModel, gpytorch.models.ExactGP, FantasizeMixin):
-    def __init__(
-        self,
-        train_X: Tensor,
-        train_Y: Tensor,
-        train_Yvar: Optional[Tensor] = None,
-        likelihood: Optional[Likelihood] = None,
-        covar_module: Optional[Module] = None,
-        mean_module: Optional[Mean] = None,
-        outcome_transform: Optional[OutcomeTransform] = None,
-        input_transform: Optional[InputTransform] = None,
-    ) -> None:
-        
+class SimpleCustomGP(ExactGP, GPyTorchModel):
+
+    _num_outputs = 1  # to inform GPyTorchModel API
+
+    def __init__(self, train_X, train_Y):
+        # squeeze output dim before passing train_Y to ExactGP
+        super().__init__(train_X, train_Y.squeeze(-1), gpytorch.likelihoods.GaussianLikelihood())
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+            base_kernel=gpytorch.kernels.RBFKernel(ard_num_dims=train_X.shape[-1]),
+        )
+        self.to(train_X)  # make sure we're on the right device/dtype
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+    
+    @classmethod
+    def construct_inputs(cls, training_data: BotorchContainer, **kwargs):
+        r"""Construct kwargs for the `SimpleCustomGP` from `TrainingData` and other options.
+
+        Args:
+            training_data: `TrainingData` container with data for single outcome
+                or for multiple outcomes for batched multi-output case.
+            **kwargs: None expected for this class.
+        """
+        return {"train_X": training_data.X, "train_Y": training_data.Y}
+
+
+class GPWithDerivatives(GPyTorchModel, ExactGP,FantasizeMixin):
+    
+    _num_outputs = 4  # to inform GPyTorchModel API
+    
+    def __init__(self, train_X: Tensor, train_Y: Tensor,):
         # Dimension of model
         dim = train_X.shape[-1]
         self.dim = dim
         self.train_X = train_X
-        self._validate_tensor_args(X=train_X, Y=train_Y, Yvar=train_Yvar)
+        self.train_Y = train_Y
         # Multi-dimensional likelihood since we're modeling a function and its gradient
-        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=1+dim)
-        super().__init__(train_X, train_Y, likelihood)
-        # Gradient-enabled mean
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=1 + dim)
+        super(GPWithDerivatives, self).__init__(train_X, train_Y.squeeze(-1), likelihood)
+        
         self.mean_module = gpytorch.means.ConstantMeanGrad()
-        # Gradient-enabled kernel
-        self.base_kernel = gpytorch.kernels.RBFKernelGrad( 
-            ard_num_dims=dim,) # Separate lengthscale for each input dimension
-        
-        # Adds lengthscale to the kernel
+        self.base_kernel = gpytorch.kernels.RBFKernelGrad(ard_num_dims=dim) # Separate lengthscale for each input dimension
         self.covar_module = gpytorch.kernels.ScaleKernel(self.base_kernel)
-        # Output dimension is 1 (function value) + dim (number of partial derivatives)
-        self._num_outputs = 1+dim
-        # Used to extract function value and not gradients during optimization
-        self.scale_tensor = torch.tensor([1.0] + [0.0]*dim, dtype=torch.double)
         
-        train_X, train_Y, train_Yvar = self._transform_tensor_args(
-            X=train_X, Y=train_Y, Yvar=train_Yvar
-        )
-        self._input_batch_shape = train_X.shape[:-2]
-        
-        #self.mean_module = mean_module
-        #self.covar_module = covar_module
-        #self.to(train_X)
-        
+        self.scale_tensor = torch.tensor([1.0] + [0.0] * dim, dtype=torch.double)
+
     def forward(self, x):
-        print(self.dim)
-        print(self.train_X.shape)
-        #if self.training:
-        #    x = self.transform_inputs(x)
+        print(f"x: {x}")
+        print(self.train_X, self.train_Y)
         mean_x = self.mean_module(x).to(device)
         covar_x = self.covar_module(x).to(device)
-        print(mean_x.shape)
-        print(covar_x.shape)
+        print(f"mean_x: {mean_x}")
+        print(f"covar_x: {covar_x}")     
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
+
+    @classmethod
+    def construct_inputs(cls, training_data: BotorchContainer, **kwargs):
+        r"""Construct kwargs for the `SimpleCustomGP` from `TrainingData` and other options.
+
+        Args:
+            training_data: `TrainingData` container with data for single outcome
+                or for multiple outcomes for batched multi-output case.
+            **kwargs: None expected for this class.
+        """
+        return {"train_X": training_data.X, "train_Y": training_data.Y}
+
 
 # ## Set up evaluation function (pipe to ASE) for trial parameters suggested by Ax. 
 # Note that this function can return additional keys that can be used in the `outcome_constraints` of the experiment.
@@ -388,12 +410,12 @@ class BOExperiment(plotter, experiment_setup):
         # Add here Soft constraint for a 2 atom molecule
         # --------------------------------------------- #
         # --------------------------------------------- #
-        #if self.input['mol_soft_constraint'] == 'T':
-        #    if self.atoms.get_distance(-2, -1) > 2.0:
-        #        print(f'mol. distance : {self.atoms.get_distance(-2, -1)}')
-        #        self.energy = self.energy + (self.atoms.get_distance(-2, -1)-2.0)**self.input['soft_constraint_power']
-        #        print(f'Molecule atom distance: {self.atoms.get_distance(-2, -1)} Angstrom')
-        #        print(f'Soft constraint energy term: {(self.atoms.get_distance(-2, -1)-2.0)**self.input["soft_constraint_power"]}')
+        if self.input['mol_soft_constraint'] == 'T':
+            if self.atoms.get_distance(-2, -1) > 1.1:
+                print(f'mol. distance : {self.atoms.get_distance(-2, -1)}')
+                self.energy = self.energy + (self.atoms.get_distance(-2, -1)-1.1)**self.input['soft_constraint_power']
+                print(f'Molecule atom distance: {self.atoms.get_distance(-2, -1)} Angstrom')
+                print(f'Soft constraint energy term: {(self.atoms.get_distance(-2, -1)-1.1)**self.input["soft_constraint_power"]}')
         # --------------------------------------------- #
         # --------------------------------------------- #
         # --------------------------------------------- #
@@ -402,17 +424,17 @@ class BOExperiment(plotter, experiment_setup):
         # Add here Soft constraint for a 3 atom molecule
         # --------------------------------------------- #
         # --------------------------------------------- #
-        if self.input['mol_soft_constraint'] == 'T':
-            if self.atoms.get_distance(-3, -2) > 2.0:
-                print(f'mol. distance : {self.atoms.get_distance(-3, -2)}')
-                self.energy = self.energy + (self.atoms.get_distance(-3, -2)-2.0)**self.input['soft_constraint_power']
-                print(f'Molecule atom distance: {self.atoms.get_distance(-3, -2)} Angstrom')
-                print(f'Soft constraint energy term: {(self.atoms.get_distance(-3, -2)-2.0)**self.input["soft_constraint_power"]}')
-            if self.atoms.get_distance(-3, -1) > 2.0:
-                print(f'mol. distance : {self.atoms.get_distance(-3, -1)}')
-                self.energy = self.energy + (self.atoms.get_distance(-3, -1)-2.0)**self.input['soft_constraint_power']
-                print(f'Molecule atom distance: {self.atoms.get_distance(-3, -1)} Angstrom')
-                print(f'Soft constraint energy term: {(self.atoms.get_distance(-3, -1)-2.0)**self.input["soft_constraint_power"]}')
+        #if self.input['mol_soft_constraint'] == 'T':
+        #    if self.atoms.get_distance(-3, -2) > 2.0:
+        #        print(f'mol. distance : {self.atoms.get_distance(-3, -2)}')
+        #        self.energy = self.energy + (self.atoms.get_distance(-3, -2)-2.0)**self.input['soft_constraint_power']
+        #        print(f'Molecule atom distance: {self.atoms.get_distance(-3, -2)} Angstrom')
+        #        print(f'Soft constraint energy term: {(self.atoms.get_distance(-3, -2)-2.0)**self.input["soft_constraint_power"]}')
+        #    if self.atoms.get_distance(-3, -1) > 2.0:
+        #        print(f'mol. distance : {self.atoms.get_distance(-3, -1)}')
+        #        self.energy = self.energy + (self.atoms.get_distance(-3, -1)-2.0)**self.input['soft_constraint_power']
+        #        print(f'Molecule atom distance: {self.atoms.get_distance(-3, -1)} Angstrom')
+        #        print(f'Soft constraint energy term: {(self.atoms.get_distance(-3, -1)-2.0)**self.input["soft_constraint_power"]}')
         # --------------------------------------------- #
         # --------------------------------------------- #
         # --------------------------------------------- #
@@ -519,7 +541,7 @@ class BOExperiment(plotter, experiment_setup):
                     num_trials=self.input['gs_init_steps'],  # How many trials should be produced from this generation step
                     min_trials_observed=3,  # How many trials need to be completed to move to next model
                     max_parallelism=5,  # Max parallelism for this step
-                    #model_kwargs={},  # Any kwargs you want passed into the model
+                    model_kwargs={"seed" : 50},  # Any kwargs you want passed into the model
                     #model_gen_kwargs={},  # Any kwargs you want passed to `modelbridge.gen`
                 ),
                 # 2. Bayesian optimization step (requires data obtained from previous phase and learns
@@ -532,21 +554,18 @@ class BOExperiment(plotter, experiment_setup):
                         "torch_device": device,
                         "surrogate": Surrogate(
                                                 # BoTorch `Model` type
-                                                botorch_model_class=GPWithDerivatives,
+                                                botorch_model_class=str_to_class(self.input['bo_surrogate']),
                                                 # Optional, MLL class with which to optimize model parameters
-                                                #mll_class=ExactMarginalLogLikelihood,
+                                                mll_class=ExactMarginalLogLikelihood,
                                                 # Optional, dictionary of keyword arguments to underlying
                                                 # BoTorch `Model` constructor
                                                 model_options={"torch_device": device},
                                                 ),
                         "botorch_acqf_class": str_to_class(self.input['bo_acquisition_f']),
-                        "acquisition_options": {"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
-                        #"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*input["number_of_ads"]*3, dtype=torch.double)),
-                                },  # Any kwargs you want passed into the model
-                    #model_gen_kwargs={"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},
-                    # Parallelism limit for this step, often lower than for Sobol
-                    # More on parallelism vs. required samples in BayesOpt:
-                    # https://ax.dev/docs/bayesopt.html#tradeoff-between-parallelism-and-total-number-of-trials
+                        #"acquisition_options": {"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [1.0]*self.input["number_of_ads"]*3, dtype=torch.double)),"num_fantasies": 5,},
+                        #"acquisition_options": {"num_fantasies": 5,},
+                                },
+                    #model_gen_kwargs={"acquisition_options": {"posterior_transform": ScalarizedPosteriorTransform(weights=torch.tensor([1.0] + [0.0]*self.input["number_of_ads"]*3, dtype=torch.double))},}# Any kwargs you want passed into the model
                 ),
             ]
         )
