@@ -31,7 +31,7 @@ with `save_bands_plotting`.
 
 """
 function save_bands_plotting(base_path::String, scfres; kpath=nothing, kline_density=20)
-    if kpath is nothing
+    if isnothing(kpath)
 	    kpath = irrfbz_path(scfres.basis.model)
     end
     bands = compute_bands(scfres, kpath; kline_density)
