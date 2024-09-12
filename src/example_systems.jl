@@ -65,7 +65,7 @@ function construct_gammaP_bandgap_vs_strain14(; strict=false)
     system = construct_silicon()
 
     if strict
-    	model_kwargs = (; functionals = [:lda_x, :lda_c_pw], temperature = 1e-6)
+    	model_kwargs = (; functionals = [:lda_x, :lda_c_pw], temperature = 1e-4)
     	basis_kwargs = (; kgrid = [4, 4, 4], Ecut = 40.0)
     	scf_kwargs = (; tol = 1e-9) # Tight convergence required for forwarddiff
     else
