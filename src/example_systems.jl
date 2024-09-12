@@ -60,13 +60,20 @@ function construct_gammaP_bandgap_vs_strain12()
     end
 end
 
-function construct_gammaP_bandgap_vs_strain14()
+function construct_gammaP_bandgap_vs_strain14(; strict=false)
     setup_threading()
     system = construct_silicon()
 
-    model_kwargs = (; functionals = [:lda_x, :lda_c_pw], temperature = 1e-4)
-    basis_kwargs = (; kgrid = [3, 3, 3], Ecut = 20.0)
-    scf_kwargs = (; tol = 1e-6) # Tight convergence required for forwarddiff
+    if strict
+    	model_kwargs = (; functionals = [:lda_x, :lda_c_pw], temperature = 1e-6)
+    	basis_kwargs = (; kgrid = [4, 4, 4], Ecut = 40.0)
+    	scf_kwargs = (; tol = 1e-9) # Tight convergence required for forwarddiff
+    else
+    	model_kwargs = (; functionals = [:lda_x, :lda_c_pw], temperature = 1e-4)
+    	basis_kwargs = (; kgrid = [3, 3, 3], Ecut = 20.0)
+    	scf_kwargs = (; tol = 1e-6) # Tight convergence required for forwarddiff
+    end
+
     calculator = DFTKCalculator(; model_kwargs, basis_kwargs, scf_kwargs, verbose=true)
 	
     x0 = Vector(flatten(DFTK.parse_system(system).positions))
