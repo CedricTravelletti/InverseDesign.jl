@@ -60,7 +60,7 @@ function construct_gammaP_bandgap_vs_strain12()
     end
 end
 
-function construct_gammaP_bandgap_vs_strain14(; strict=false)
+function construct_gammaP_bandgap_vs_strain14(target=0.; strict=false)
     setup_threading()
     system = construct_silicon()
 
@@ -85,7 +85,7 @@ function construct_gammaP_bandgap_vs_strain14(; strict=false)
     function _f_strain14(strain14)
         strain = [[strain14[1]]; [0., 0]; [strain14[2]]; [0., 0]]
     	positions_flat = ComponentVector(; atoms=x0, strain)
-	gamma_point_bandgap(calculator, system, positions_flat)[:bandgap]
+	(gamma_point_bandgap(calculator, system, positions_flat)[:bandgap] - target)^2
     end
     
     function gammaP_bandgap_vs_strain14(strain14)
